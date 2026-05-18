@@ -248,7 +248,8 @@ impl AssetCollector {
     /// Call this before streaming the layer to get the destination path,
     /// then call `register_layer()` after writing to register it in the inventory.
     pub fn layer_staging_path(&self, digest: &str) -> PathBuf {
-        let filename = digest_to_filename(digest).unwrap_or_else(|_| format!("{}.tar", digest));
+        let filename = digest_to_filename(digest)
+            .expect("layer digest must be sha256:<hex> with at least 12 hex chars");
         self.staging_dir.join(format!("layers/{}", filename))
     }
 
