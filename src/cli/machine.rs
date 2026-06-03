@@ -1491,7 +1491,7 @@ impl CreateCmd {
         let params = crate::cli::smolfile::build_create_params(
             name,
             self.image,
-            None, // entrypoint: from Smolfile only
+            None,         // entrypoint: from Smolfile only
             self.command, // persistent-workload command (detached container on start)
             self.cpus,
             self.mem,
@@ -2876,7 +2876,9 @@ impl MonitorCmd {
                         break;
                     }
 
-                    match vm_common::start_vm_named(&name, None, None, /* from_snapshot */ false) {
+                    match vm_common::start_vm_named(
+                        &name, None, None, /* from_snapshot */ false,
+                    ) {
                         Ok(()) => {
                             println!("  machine restarted");
                             last_start = std::time::Instant::now();

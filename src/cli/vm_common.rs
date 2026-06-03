@@ -649,7 +649,9 @@ pub fn fork_vm(
     validate_vm_name(clone, "clone name").map_err(|e| Error::config("clone name", e))?;
 
     let db = SmolvmDb::open()?;
-    let golden_rec = db.get_vm(golden)?.ok_or_else(|| Error::vm_not_found(golden))?;
+    let golden_rec = db
+        .get_vm(golden)?
+        .ok_or_else(|| Error::vm_not_found(golden))?;
 
     // The golden must be alive and forkable. We probe the control socket rather
     // than the vsock agent: after its first fork the golden is frozen (paused)
@@ -708,7 +710,9 @@ pub fn fork_vm(
         for (golden_host, guest) in &clone_rec.ports {
             match alloc_free_host_port() {
                 Some(h) => {
-                    eprintln!("  port {golden_host}->{guest} (golden) remapped to {h}->{guest} (clone)");
+                    eprintln!(
+                        "  port {golden_host}->{guest} (golden) remapped to {h}->{guest} (clone)"
+                    );
                     remapped.push((h, *guest));
                 }
                 None => eprintln!(
