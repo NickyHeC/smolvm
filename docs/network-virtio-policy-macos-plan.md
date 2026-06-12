@@ -98,7 +98,25 @@ content end-to-end; v6 egress CIDR A/B (allow `fd7a::/48` → fetch OK; allow
 both `127.0.0.1` and `[::1]` (explicit AF_INET6 client). AAAA learning unit-tested
 (host lacks external IPv6 for a live allow-host→AAAA run).
 
-Known remaining gaps (both families): general UDP relay (non-DNS UDP dropped), ICMP.
+Known remaining gaps (both families): ICMP (ping). General UDP is now relayed — see
+Workstream E.
+
+## Workstream E — general UDP relay (DONE, live-validated 2026-06-12)
+Non-DNS guest UDP used to be dropped (`FrameAction::UnsupportedUdp`), breaking
+QUIC/HTTP-3, NTP, and DNS on non-standard ports. `udp_relay.rs` is a tiny userspace
+NAT mirroring the TCP relay's shape: destination-keyed smoltcp UDP sockets
+(`UdpSocketTable`, the UDP twin of `create_tcp_socket`), one relay thread owning a
+connected host `UdpSocket` per (guest, destination) flow, channels + wake pipes in
+both directions, and NAT-style idle expiry (flows 60s, destination sockets 120s).
+Replies are written back with `local_address` = the original destination, so the
+guest sees them come from the right peer. Egress policy applies exactly as for TCP
+(static CIDRs + DNS-learned IPs; denied destinations are a silent UDP black hole);
+DNS :53 keeps its own intercept-and-filter path. Both IP families.
+
+**Validated live (Linux/KVM):** guest `nc -u` to a host echo server on :9099
+round-trips over IPv4 and IPv6; with `--allow-cidr 1.1.1.1/32` the same UDP flow is
+black-holed while TCP to the allowed CIDR still works. Unit tests cover the relay
+thread end-to-end, flow sockets, and the policy/DNS carve-out.
 
 ## Sequencing
 A and B are independent (parallelizable). C depends on A removing the conflict. A is the

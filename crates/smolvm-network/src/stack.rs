@@ -21,7 +21,7 @@
 //!   -> protocol-specific handling:
 //!        - TCP  -> host relay threads
 //!        - DNS  -> host UDP socket
-//!        - other supported egress -> future phases
+//!        - UDP  -> per-flow host socket relay (udp_relay)
 //!   -> outbound network
 //! ```
 //!
@@ -35,7 +35,7 @@
 //!   -> protocol-specific side effects
 //!        - TCP SYN  -> create relay/socket state
 //!        - DNS UDP  -> gateway UDP socket
-//!        - other UDP-> drop for now
+//!        - other UDP-> destination-keyed relay socket
 //!   -> smoltcp egress
 //!   -> host_to_guest queue
 //!   -> FrameStream writer
@@ -56,6 +56,7 @@ use crate::egress::EgressPolicy;
 use crate::queues::NetworkFrameQueues;
 use crate::tcp_listeners::AcceptedTcpConnection;
 use crate::tcp_relay::{spawn_tcp_relay, TcpRelayTable};
+use crate::udp_relay;
 use crate::{virtio_net_log, DEFAULT_DNS_ADDR};
 use smoltcp::iface::{
     Config, Interface, PollIngressSingleResult, PollResult, SocketHandle, SocketSet,
@@ -110,7 +111,10 @@ enum FrameAction {
         destination: SocketAddr,
     },
     DnsQuery,
-    UnsupportedUdp,
+    /// Non-DNS guest UDP, relayed to a host socket (see `udp_relay`).
+    UdpFlow {
+        destination: SocketAddr,
+    },
     Passthrough,
 }
 
@@ -171,6 +175,14 @@ fn run_network_stack(
     let dns_socket_handle = add_dns_socket(&mut sockets);
     let relay_wake = Arc::new(queues.relay_wake.clone());
     let mut relays = TcpRelayTable::new(None, egress.clone());
+    let mut udp_sockets = udp_relay::UdpSocketTable::new();
+    let udp_channels = {
+        let shutdown_queues = queues.clone();
+        udp_relay::start_udp_relay(
+            relay_wake.clone(),
+            Arc::new(move || shutdown_queues.is_shutting_down()),
+        )
+    };
 
     // The smoltcp loop is driven by fd-based wakeups rather than busy spinning.
     // guest_wake  -> new guest frame or shutdown
@@ -199,7 +211,7 @@ fn run_network_stack(
             // flows need side effects first:
             // - TCP SYN: pre-create a matching smoltcp socket + relay entry
             // - DNS UDP: allow through for gateway-side forwarding
-            // - other UDP: currently unsupported in the MVP
+            // - other UDP: pre-create the destination-keyed relay socket
             match classify_guest_frame(frame) {
                 FrameAction::TcpSyn {
                     source,
@@ -228,11 +240,21 @@ fn run_network_stack(
                         device.drop_staged_frame();
                     }
                 }
-                FrameAction::UnsupportedUdp => {
-                    // Phase 1 only supports DNS over UDP. Other UDP traffic is
-                    // intentionally dropped until a general UDP relay exists.
-                    virtio_net_log!("virtio-net: dropping unsupported guest UDP datagram");
-                    device.drop_staged_frame();
+                FrameAction::UdpFlow { destination } => {
+                    // Same egress policy as TCP; a denied destination's datagram
+                    // is silently dropped (a guest sees a normal UDP black hole).
+                    if udp_relay::should_relay_udp(destination, &egress)
+                        && udp_sockets.ensure_socket(destination, &mut sockets)
+                    {
+                        if matches!(
+                            interface.poll_ingress_single(now, &mut device, &mut sockets),
+                            PollIngressSingleResult::None
+                        ) {
+                            device.drop_staged_frame();
+                        }
+                    } else {
+                        device.drop_staged_frame();
+                    }
                 }
             }
         }
@@ -256,6 +278,14 @@ fn run_network_stack(
         // threads, and service the DNS gateway socket.
         relays.relay_data(&mut sockets);
         process_dns_queries(dns_socket_handle, &mut sockets, &egress);
+
+        // General UDP: forward staged guest datagrams to the relay thread,
+        // deliver any replies it produced, and expire idle destination sockets.
+        if udp_sockets.drain_to_relay(&mut sockets, &udp_channels.to_relay) {
+            udp_channels.relay_thread_wake.wake();
+        }
+        udp_sockets.deliver_replies(&mut sockets, &udp_channels.from_relay);
+        udp_sockets.expire_idle(&mut sockets);
 
         // Once the guest-side TCP handshake is established inside smoltcp, we
         // can spawn the corresponding host relay thread.
@@ -655,7 +685,9 @@ fn classify_guest_frame(frame: &[u8]) -> FrameAction {
             if udp.dst_port() == DNS_SOCKET_PORT {
                 FrameAction::DnsQuery
             } else {
-                FrameAction::UnsupportedUdp
+                FrameAction::UdpFlow {
+                    destination: SocketAddr::new(dst_ip, udp.dst_port()),
+                }
             }
         }
         _ => FrameAction::Passthrough,

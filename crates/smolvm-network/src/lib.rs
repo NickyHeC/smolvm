@@ -65,6 +65,7 @@ pub mod queues;
 pub mod stack;
 pub mod tcp_listeners;
 pub mod tcp_relay;
+pub mod udp_relay;
 
 pub use egress::EgressPolicy;
 
