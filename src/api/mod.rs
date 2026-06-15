@@ -191,8 +191,17 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>) -> Router 
         .merge(logs_route)
         .merge(machine_routes_with_timeout);
 
+    // Volume provisioning (node-side storage for the control plane): create the
+    // backing storage on THIS worker and return its host path. See
+    // handlers::volumes.
+    let volume_routes = Router::new()
+        .route("/", post(handlers::volumes::provision_volume))
+        .route("/{id}", delete(handlers::volumes::deprovision_volume));
+
     // API v1 routes
-    let api_v1 = Router::new().nest("/machines", machine_routes);
+    let api_v1 = Router::new()
+        .nest("/machines", machine_routes)
+        .nest("/volumes", volume_routes);
 
     // CORS: Use configured origins, or default to localhost for security.
     let default_origins = || {

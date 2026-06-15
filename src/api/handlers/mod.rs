@@ -6,6 +6,7 @@ pub mod health;
 pub mod images;
 pub mod machines;
 pub mod node;
+pub mod volumes;
 
 use crate::api::error::ApiError;
 use crate::api::state::MachineEntry;
