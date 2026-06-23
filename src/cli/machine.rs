@@ -16,6 +16,7 @@ use crate::cli::parsers::{
 };
 use crate::cli::vm_common::{self, DeleteVmOptions};
 use clap::{Args, Subcommand};
+use sha2::{Digest, Sha256};
 use smolvm::agent::{docker_config_mount, AgentClient, AgentManager, RunConfig, VmResources};
 use smolvm::data::network::PortMapping;
 use smolvm::data::resources::{DEFAULT_MICROVM_CPU_COUNT, DEFAULT_MICROVM_MEMORY_MIB};
@@ -24,7 +25,7 @@ use smolvm::network::{validate_requested_network_backend, NetworkBackend};
 use smolvm::{DEFAULT_IDLE_CMD, DEFAULT_SHELL_CMD};
 use std::io::Write;
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Resolve `--allow-cidr`, `--allow-host`, and `--outbound-localhost-only` into a CIDR list,
@@ -458,8 +459,275 @@ pub struct RunCmd {
     )]
     pub secret_file: Vec<String>,
 
+    /// Skip the init-layer cache: re-run `init` on every ephemeral run instead of
+    /// baking `image + init` once into a cached, reusable artifact. Use this when
+    /// `init` depends on live volume contents (and so cannot be safely cached).
+    #[arg(long, help_heading = "Resources")]
+    pub no_init_cache: bool,
+
+    /// Rebuild the cached init layer even if a matching one already exists.
+    #[arg(long, help_heading = "Resources")]
+    pub rebuild_init_cache: bool,
+
     #[command(flatten, next_help_heading = "Network")]
     pub proxy_opts: crate::cli::proxy_opts::ProxyOpts,
+}
+
+/// Cache directory for baked init layers: a sibling of the per-VM cache
+/// (`<cache>/smolvm/init-layers`), derived from the same canonical root as
+/// [`smolvm::agent::vm_cache_root`] so it shares the install's cache location.
+fn init_layer_cache_dir() -> PathBuf {
+    smolvm::agent::vm_cache_root()
+        .parent()
+        .map(|smolvm_root| smolvm_root.join("init-layers"))
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp/smolvm-init-layers"))
+}
+
+/// Max real bytes the init-layer cache may occupy before eviction; override via
+/// `SMOLVM_INIT_CACHE_MAX_BYTES`. Default 10 GiB (~tens of layers).
+fn init_cache_max_bytes() -> u64 {
+    const DEFAULT: u64 = 10 * 1024 * 1024 * 1024;
+    std::env::var("SMOLVM_INIT_CACHE_MAX_BYTES")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT)
+}
+
+/// Evict least-recently-modified cached layers until the cache is at or below
+/// `max_bytes`, never evicting `keep` (the layer just published). Best-effort:
+/// per-entry errors are skipped. The `.smolmachine` sidecars are zstd-compressed
+/// (dense) files, so apparent length is an accurate size.
+fn prune_init_cache(dir: &Path, max_bytes: u64, keep: &Path) {
+    let mut layers: Vec<(PathBuf, std::time::SystemTime, u64)> = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|x| x.to_str()) != Some("smolmachine") {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        layers.push((path, mtime, meta.len()));
+    }
+    let total: u64 = layers.iter().map(|(_, _, s)| *s).sum();
+    if total <= max_bytes {
+        return;
+    }
+    layers.sort_by_key(|(_, mtime, _)| *mtime); // oldest first
+    let mut over = total - max_bytes;
+    for (path, _, size) in layers {
+        if over == 0 {
+            break;
+        }
+        if path == keep {
+            continue;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            over = over.saturating_sub(size);
+        }
+    }
+}
+
+/// Best-effort sweep of leftover `init-bake-*` temp machines from crashed bakes.
+/// Age is taken from the DB record's `created_at` (always present — unlike the data
+/// dir, which a create-then-crash leaves absent) and gated on a generous threshold
+/// so an in-flight concurrent bake — which finishes in seconds — is never touched.
+/// Override the threshold (seconds) with `SMOLVM_INIT_BAKE_GC_SECS`.
+fn gc_stale_bake_machines(exe: &Path) {
+    let stale_after = std::env::var("SMOLVM_INIT_BAKE_GC_SECS")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(30 * 60);
+    let Ok(cfg) = smolvm::config::SmolvmConfig::load() else {
+        return;
+    };
+    let now = smolvm::util::current_timestamp();
+    let stale: Vec<String> = cfg
+        .list_vms()
+        .filter(|(name, _)| name.starts_with("init-bake-"))
+        .filter(|(_, record)| now.saturating_sub(record.created_at) >= stale_after)
+        .map(|(name, _)| name.clone())
+        .collect();
+    for name in stale {
+        let _ = run_smolvm(exe, &["machine", "delete", "--name", &name, "-f"]);
+    }
+}
+
+/// Content key for an init layer: a hash of the image + init commands + env, so the
+/// cache rebuilds exactly when those inputs change.
+///
+/// PROTOTYPE LIMITATION: if `init` runs a script that lives on a mounted volume
+/// (e.g. `bash /project/init.sh`), the script's CONTENTS are not part of the key —
+/// inline the init steps into the Smolfile, or pass `--no-init-cache`.
+fn init_layer_key(image: Option<&str>, init: &[String], env: &[String]) -> String {
+    let mut h = Sha256::new();
+    h.update(image.unwrap_or("").as_bytes());
+    h.update([0u8]);
+    for c in init {
+        h.update(c.as_bytes());
+        h.update([0u8]);
+    }
+    h.update([0u8]);
+    for e in env {
+        h.update(e.as_bytes());
+        h.update([0u8]);
+    }
+    hex::encode(h.finalize())[..16].to_string()
+}
+
+/// Bake `image + init` into a cached `.smolmachine` (or reuse an existing one) and
+/// return its path. Runs the well-tested `machine create/start/stop` + `pack create
+/// --from-vm` flow as subprocesses of this same binary: create a temp machine from
+/// the Smolfile with the workload replaced by a `/bin/true` no-op so only `init`
+/// runs, snapshot it, and delete the temp machine. The real workload command is
+/// supplied at run time against the resulting artifact.
+fn ensure_init_layer(
+    params: &vm_common::CreateVmParams,
+    smolfile: Option<&Path>,
+    rebuild: bool,
+) -> smolvm::Result<PathBuf> {
+    let key = init_layer_key(params.image.as_deref(), &params.init, &params.env);
+    let dir = init_layer_cache_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| smolvm::Error::config("init-layer cache", e.to_string()))?;
+    let cached = dir.join(format!("{key}.smolmachine"));
+    if cached.exists() && !rebuild {
+        println!("Using cached init layer {key}");
+        return Ok(cached);
+    }
+
+    let smolfile = smolfile.ok_or_else(|| {
+        smolvm::Error::config(
+            "init-layer cache",
+            "init caching requires a --smolfile (the init source); pass --no-init-cache otherwise",
+        )
+    })?;
+    println!(
+        "Baking init layer (one-time; reused on later runs) [{key}, {} init step(s)]",
+        params.init.len()
+    );
+    let started = std::time::Instant::now();
+
+    let exe = std::env::current_exe()
+        .map_err(|e| smolvm::Error::config("init-layer cache", e.to_string()))?;
+    // Reap any temp machines orphaned by previously crashed bakes (age-gated so it
+    // never touches a concurrent in-flight bake).
+    gc_stale_bake_machines(&exe);
+    let pid = std::process::id();
+    let tmp = format!("init-bake-{key}-{pid}");
+    let sf = smolfile.to_string_lossy().to_string();
+
+    // Bake into a per-process staging dir, then atomically rename the sidecar into
+    // its final cache path. This makes an interrupted bake leave nothing usable (no
+    // truncated `.smolmachine` a later run would treat as valid), and makes two
+    // concurrent bakes of the same key safe — each stages independently and the last
+    // rename wins. The staging dir also absorbs `pack`'s stub binary, discarded when
+    // the dir is removed (the cache only needs the sidecar).
+    let staging = dir.join(format!(".staging-{key}-{pid}"));
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging)
+        .map_err(|e| smolvm::Error::config("init-layer cache", e.to_string()))?;
+    let staged_out = staging.join("layer").to_string_lossy().to_string();
+    let staged_sidecar = staging.join("layer.smolmachine");
+
+    // Clear any temp machine left by a prior failed bake (best-effort; the common
+    // case is "doesn't exist", whose error is captured and discarded by run_smolvm).
+    let _ = run_smolvm(&exe, &["machine", "delete", "--name", &tmp, "-f"]);
+
+    let bake = (|| -> smolvm::Result<()> {
+        // Create from the Smolfile (init + volumes) but replace the workload with
+        // `/bin/true` so `start` runs init only. Forward the RESOLVED image and env
+        // (CLI overrides included) so the baked rootfs matches the cache key, which
+        // is derived from those same resolved params.
+        let mut create: Vec<String> = ["machine", "create", "--name", &tmp, "--smolfile", &sf]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        if let Some(image) = &params.image {
+            create.push("--image".into());
+            create.push(image.clone());
+        }
+        for e in &params.env {
+            create.push("-e".into());
+            create.push(e.clone());
+        }
+        create.push("--".into());
+        create.push("/bin/true".into());
+        let create: Vec<&str> = create.iter().map(String::as_str).collect();
+
+        println!("  · pulling image and running init...");
+        run_smolvm(&exe, &create)?;
+        run_smolvm(&exe, &["machine", "start", "--name", &tmp])?;
+        run_smolvm(&exe, &["machine", "stop", "--name", &tmp])?;
+        println!("  · snapshotting...");
+        run_smolvm(
+            &exe,
+            &["pack", "create", "--from-vm", &tmp, "-o", &staged_out],
+        )?;
+        if !staged_sidecar.exists() {
+            return Err(smolvm::Error::config(
+                "init-layer cache",
+                format!("bake did not produce {}", staged_sidecar.display()),
+            ));
+        }
+        Ok(())
+    })();
+    let _ = run_smolvm(&exe, &["machine", "delete", "--name", &tmp, "-f"]);
+
+    // Publish atomically only on success; always clear staging (drops the stub + any
+    // partial output) so a failed bake leaves the existing cache untouched.
+    let publish = bake.and_then(|_| {
+        std::fs::rename(&staged_sidecar, &cached).map_err(|e| {
+            smolvm::Error::config("init-layer cache", format!("publish cached layer: {e}"))
+        })
+    });
+    let _ = std::fs::remove_dir_all(&staging);
+    publish?;
+
+    // Bound the cache: evict oldest layers if we're over the cap (keeping the one
+    // just baked). Best-effort — failure to prune never fails the run.
+    prune_init_cache(&dir, init_cache_max_bytes(), &cached);
+
+    println!("  ✓ baked in {}s", started.elapsed().as_secs());
+    Ok(cached)
+}
+
+/// Run this same smolvm binary as a subprocess for one bake step. Output is
+/// CAPTURED (not inherited) so the bake's internal create/pull/pack chatter — and
+/// the harmless "vm not found" from the best-effort pre-clean — never reach the
+/// user's terminal; on failure the captured stderr tail is surfaced in the error.
+fn run_smolvm(exe: &Path, args: &[&str]) -> smolvm::Result<()> {
+    let out = std::process::Command::new(exe)
+        .args(args)
+        .output()
+        .map_err(|e| smolvm::Error::config("init-layer bake", e.to_string()))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let tail = stderr
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .rev()
+            .take(12)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(smolvm::Error::config(
+            "init-layer bake",
+            format!(
+                "`smolvm {}` failed ({}):\n{tail}",
+                args.join(" "),
+                out.status
+            ),
+        ));
+    }
+    Ok(())
 }
 
 impl RunCmd {
@@ -542,7 +810,7 @@ impl RunCmd {
             vec![],
             self.env,
             self.workdir,
-            self.smolfile,
+            self.smolfile.clone(),
             self.storage,
             self.overlay,
             cli_allow_cidrs,
@@ -562,6 +830,59 @@ impl RunCmd {
         for (key, r) in parse_cli_secret_refs(&self.secret_env, &self.secret_file)? {
             params.secret_refs.insert(key, r);
         }
+
+        // Warn when caching is explicitly disabled but there's init to run: the
+        // un-baked ephemeral path runs init, but its filesystem changes are not
+        // reliably visible to the workload, so init may appear to "do nothing".
+        if self.no_init_cache && !self.detach && params.image.is_some() && !params.init.is_empty() {
+            eprintln!(
+                "warning: --no-init-cache skips baking init into a reusable layer. init still \
+                 runs, but in an un-baked ephemeral run its changes may not reach the workload. \
+                 Drop --no-init-cache to bake init once and reuse it."
+            );
+        }
+
+        // Init-layer cache (prototype): for an ephemeral run of an IMAGE with `init`
+        // commands, bake `image + init` once into a cached `.smolmachine` and run from
+        // that artifact, so init's cost (e.g. `apt install`) is paid once and reused
+        // on every later run instead of re-running on each ephemeral boot. Skipped for
+        // detached/persistent runs (`-d`) and when `--no-init-cache` is set.
+        if !self.no_init_cache && !self.detach && params.image.is_some() && !params.init.is_empty()
+        {
+            let cached =
+                ensure_init_layer(&params, self.smolfile.as_deref(), self.rebuild_init_cache)?;
+            // The real workload: CLI trailing args win, else the Smolfile's
+            // entrypoint+cmd (the baked artifact's own command is a `/bin/true` no-op).
+            let command = if !self.command.is_empty() {
+                self.command.clone()
+            } else {
+                let mut c = params.entrypoint.clone();
+                c.extend(params.cmd.clone());
+                c
+            };
+            return crate::cli::pack_run::PackRunCmd {
+                sidecar: Some(cached),
+                command,
+                interactive: self.interactive,
+                tty: self.tty,
+                timeout: self.timeout,
+                workdir: params.workdir.clone(),
+                env: params.env.clone(),
+                volume: params.volume.clone(),
+                port: params.port.clone(),
+                net: params.net,
+                net_backend: params.network_backend,
+                cpus: (params.cpus != DEFAULT_MICROVM_CPU_COUNT).then_some(params.cpus),
+                mem: (params.mem != DEFAULT_MICROVM_MEMORY_MIB).then_some(params.mem),
+                storage: params.storage_gb,
+                overlay: params.overlay_gb,
+                force_extract: false,
+                info: false,
+                debug: false,
+            }
+            .run();
+        }
+
         let mut mounts = HostMount::parse(&params.volume)?;
         let ports = params.port.clone();
         PortMapping::check_duplicates(&ports)
@@ -1180,6 +1501,33 @@ mod tests {
     use clap::Parser;
 
     #[test]
+    fn init_layer_key_is_stable_and_input_sensitive() {
+        let init = vec!["apt-get install -y jq".to_string()];
+        let env = vec!["FOO=bar".to_string()];
+        let base = init_layer_key(Some("ubuntu:noble"), &init, &env);
+        // Deterministic for identical inputs.
+        assert_eq!(base, init_layer_key(Some("ubuntu:noble"), &init, &env));
+        assert_eq!(base.len(), 16);
+        // Sensitive to each input: image, init, env.
+        assert_ne!(base, init_layer_key(Some("ubuntu:jammy"), &init, &env));
+        assert_ne!(
+            base,
+            init_layer_key(Some("ubuntu:noble"), &["other".to_string()], &env)
+        );
+        assert_ne!(
+            base,
+            init_layer_key(Some("ubuntu:noble"), &init, &["FOO=baz".to_string()])
+        );
+        // Order of init steps matters (different layer).
+        let init_rev = vec!["b".to_string(), "a".to_string()];
+        let init_fwd = vec!["a".to_string(), "b".to_string()];
+        assert_ne!(
+            init_layer_key(Some("x"), &init_fwd, &[]),
+            init_layer_key(Some("x"), &init_rev, &[])
+        );
+    }
+
+    #[test]
     fn parse_cli_secret_refs_builds_env_and_file_refs() {
         let refs = parse_cli_secret_refs(
             &["GUEST_TOKEN=HOST_TOKEN".to_string()],
@@ -1761,7 +2109,7 @@ impl CreateCmd {
             self.init,
             self.env,
             self.workdir,
-            self.smolfile,
+            self.smolfile.clone(),
             self.storage,
             self.overlay,
             cli_allow_cidrs,
