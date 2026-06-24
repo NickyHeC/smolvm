@@ -36,7 +36,7 @@ assert_egress_blocked() {
     local vm_name="$1"
 
     local web_ip
-    web_ip=$(getent ahostsv4 example.com | awk 'NR==1{print $1}')
+    web_ip=$(resolve_host_ipv4 example.com)
     if [[ -z "$web_ip" ]]; then
         echo "FAIL: could not resolve a non-resolver block-probe target on host"
         return 1
@@ -219,9 +219,12 @@ test_machine_egress_allow_host_permitted() {
     $SMOLVM machine create --name "$vm_name" --allow-host one.one.one.one 2>&1 || return 1
     $SMOLVM machine start --name "$vm_name" 2>&1 || { $SMOLVM machine delete --name "$vm_name" -f 2>/dev/null; return 1; }
 
-    # DNS lookup to allowed host's IP should succeed
+    # Resolving the ALLOWED host must succeed. (Query one.one.one.one — the host
+    # we allow-listed — not some other domain: the allow-host filter correctly
+    # returns NXDOMAIN for any non-allowed name, so querying e.g. cloudflare.com
+    # here would be a self-inflicted failure, not a policy bug.)
     local output exit_code=0
-    output=$($SMOLVM machine exec --name "$vm_name" -- nslookup cloudflare.com 1.1.1.1 2>&1) || exit_code=$?
+    output=$($SMOLVM machine exec --name "$vm_name" -- nslookup one.one.one.one 1.1.1.1 2>&1) || exit_code=$?
 
     $SMOLVM machine stop --name "$vm_name" 2>/dev/null || true
     $SMOLVM machine delete --name "$vm_name" -f 2>/dev/null || true
