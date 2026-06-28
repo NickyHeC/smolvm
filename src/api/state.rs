@@ -187,6 +187,21 @@ impl Drop for ReservationGuard<'_> {
     }
 }
 
+/// Whether `s` is a VM data-dir name — i.e. the output shape of `vm_dir_hash`:
+/// exactly 16 lowercase hex chars. Used to confine the dangling-dir sweep to VM
+/// dirs, never the shared pack store (`_shared`) or other cache entries.
+fn is_vm_dir_hash(s: &str) -> bool {
+    s.len() == 16
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Pure reaping decision for the dangling-dir sweep: a cache entry is dangling
+/// iff it has the VM-dir-hash shape AND no live machine record maps to it.
+fn is_dangling_vm_dir(dir_name: &str, valid_hashes: &std::collections::HashSet<String>) -> bool {
+    is_vm_dir_hash(dir_name) && !valid_hashes.contains(dir_name)
+}
+
 impl ApiState {
     /// Create a new API state, opening the database.
     ///
@@ -380,6 +395,55 @@ impl ApiState {
         }
 
         loaded
+    }
+
+    /// Remove VM data dirs under the cache root that no current machine record
+    /// references — a filesystem-level GC for the dirs the per-record path can't
+    /// see (a dir whose record was already gone: a legacy leak, or a CLI ephemeral
+    /// orphan that resolved to the wrong hash).
+    ///
+    /// Deliberately NOT called from `load_persisted_machines`: this is a global
+    /// sweep keyed off the *current* DB, so it must only run in the real `smolvm
+    /// serve` process (which owns this node's cache), never from a unit test or an
+    /// embedded library user whose DB does not describe the host's dirs — there it
+    /// would wipe live machines. The caller invokes it at server startup, before
+    /// requests are served, so it cannot race VM creation. Returns the count
+    /// removed.
+    ///
+    /// Safe by construction: only entries whose name is a VM data-dir hash (16
+    /// lowercase hex chars, the `vm_dir_hash` shape) are candidates, so the shared
+    /// pack store (`_shared`) and marker files are never touched, and every hash
+    /// backing a live DB record is skipped.
+    pub fn reclaim_dangling_vm_dirs(&self) -> usize {
+        let valid: std::collections::HashSet<String> = match self.db.list_vms() {
+            Ok(vms) => vms
+                .iter()
+                .map(|(name, _)| crate::agent::vm_dir_hash(name))
+                .collect(),
+            Err(_) => return 0,
+        };
+        let root = crate::agent::vm_cache_root();
+        let entries = match std::fs::read_dir(&root) {
+            Ok(e) => e,
+            Err(_) => return 0,
+        };
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            let dir_name = entry.file_name().to_string_lossy().into_owned();
+            if !is_dangling_vm_dir(&dir_name, &valid) {
+                continue;
+            }
+            if entry.path().is_dir() {
+                tracing::info!(dir = %dir_name, "removing dangling VM data dir (no machine record)");
+                match std::fs::remove_dir_all(entry.path()) {
+                    Ok(()) => removed += 1,
+                    Err(e) => {
+                        tracing::warn!(dir = %dir_name, error = %e, "failed to remove dangling VM data dir")
+                    }
+                }
+            }
+        }
+        removed
     }
 
     /// Get a machine entry by name.
@@ -1508,6 +1572,26 @@ mod tests {
         // Name should be available for reuse
         let token = SmolvmDb::create_reservation_token();
         assert!(state.reserve_machine_name("dead-machine", &token).is_ok());
+    }
+
+    #[test]
+    fn dangling_vm_dir_reaping_policy() {
+        use std::collections::HashSet;
+        // VM-dir-hash shape = exactly 16 lowercase hex chars.
+        assert!(is_vm_dir_hash("0213f25389658451"));
+        assert!(!is_vm_dir_hash("_shared")); // shared pack store — never a candidate
+        assert!(!is_vm_dir_hash("uids"));
+        assert!(!is_vm_dir_hash("0213F25389658451")); // uppercase isn't our shape
+        assert!(!is_vm_dir_hash("0213f253896584")); // too short
+        assert!(!is_vm_dir_hash("0213f25389658451aa")); // too long
+        assert!(!is_vm_dir_hash("0213f2538965845z")); // non-hex
+
+        // A hash backing a live record is kept; an unbacked hash is dangling;
+        // non-VM entries are never dangling regardless of the valid set.
+        let valid: HashSet<String> = ["aaaaaaaaaaaaaaaa".to_string()].into_iter().collect();
+        assert!(is_dangling_vm_dir("bbbbbbbbbbbbbbbb", &valid)); // hash, no record → reap
+        assert!(!is_dangling_vm_dir("aaaaaaaaaaaaaaaa", &valid)); // hash, has record → keep
+        assert!(!is_dangling_vm_dir("_shared", &valid)); // not a hash → keep
     }
 
     #[test]
