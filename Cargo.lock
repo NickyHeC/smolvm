@@ -2250,7 +2250,6 @@ version = "1.2.5"
 dependencies = [
  "crossbeam-queue",
  "humantime",
- "libc",
  "polling",
  "smoltcp",
  "socket2",
