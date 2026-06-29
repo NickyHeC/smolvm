@@ -831,11 +831,6 @@ pub async fn start_machine(
     let ports = record.port_mappings();
     let resources = record.vm_resources();
 
-    // Note: concurrent-boot bounding lives at the chokepoint all boot paths share
-    // (`AgentManager::start_via_subprocess` → a process-wide sync gate), not here,
-    // so the supervisor + reconnect boot paths are bounded too. See
-    // `smolvm::process::acquire_boot_permit`.
-
     // Start agent VM in blocking task.
     // Uses subprocess launch to avoid macOS fork-in-multithreaded-process issue.
     let name_clone = name.clone();
