@@ -2876,9 +2876,6 @@ mod tests {
 
         let _ = child.kill();
         let _ = child.wait();
-        assert!(
-            !cmdline_contains(pid, &token),
-            "a dead PID must not match"
-        );
+        assert!(!cmdline_contains(pid, &token), "a dead PID must not match");
     }
 }
