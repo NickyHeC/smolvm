@@ -54,6 +54,12 @@ pub struct GpuBackend {
         *mut *mut c_void,
     ) -> CuResultCode,
     ctx_synchronize: unsafe extern "C" fn() -> CuResultCode,
+    stream_create: unsafe extern "C" fn(*mut *mut c_void, c_uint) -> CuResultCode,
+    stream_destroy: unsafe extern "C" fn(*mut c_void) -> CuResultCode,
+    stream_synchronize: unsafe extern "C" fn(*mut c_void) -> CuResultCode,
+    event_create: unsafe extern "C" fn(*mut *mut c_void, c_uint) -> CuResultCode,
+    event_destroy: unsafe extern "C" fn(*mut c_void) -> CuResultCode,
+    event_elapsed_time: unsafe extern "C" fn(*mut f32, *mut c_void, *mut c_void) -> CuResultCode,
 }
 
 unsafe fn sym<T>(lib: &Library, name: &[u8]) -> Result<T, String> {
@@ -86,6 +92,12 @@ impl GpuBackend {
                 memcpy_dtoh: sym(&lib, b"cuMemcpyDtoH_v2\0")?,
                 launch_kernel: sym(&lib, b"cuLaunchKernel\0")?,
                 ctx_synchronize: sym(&lib, b"cuCtxSynchronize\0")?,
+                stream_create: sym(&lib, b"cuStreamCreate\0")?,
+                stream_destroy: sym(&lib, b"cuStreamDestroy_v2\0")?,
+                stream_synchronize: sym(&lib, b"cuStreamSynchronize\0")?,
+                event_create: sym(&lib, b"cuEventCreate\0")?,
+                event_destroy: sym(&lib, b"cuEventDestroy_v2\0")?,
+                event_elapsed_time: sym(&lib, b"cuEventElapsedTime\0")?,
                 _lib: lib,
             };
             Ok(b)
@@ -229,5 +241,35 @@ impl Backend for GpuBackend {
     }
     fn ctx_synchronize(&mut self) -> CuResult<()> {
         unsafe { chk((self.ctx_synchronize)()) }
+    }
+    fn stream_create(&mut self, flags: u32) -> CuResult<u64> {
+        let mut stream: *mut c_void = std::ptr::null_mut();
+        unsafe { chk((self.stream_create)(&mut stream, flags))? };
+        Ok(stream as u64)
+    }
+    fn stream_destroy(&mut self, stream: u64) -> CuResult<()> {
+        unsafe { chk((self.stream_destroy)(stream as *mut c_void)) }
+    }
+    fn stream_synchronize(&mut self, stream: u64) -> CuResult<()> {
+        unsafe { chk((self.stream_synchronize)(stream as *mut c_void)) }
+    }
+    fn event_create(&mut self, flags: u32) -> CuResult<u64> {
+        let mut event: *mut c_void = std::ptr::null_mut();
+        unsafe { chk((self.event_create)(&mut event, flags))? };
+        Ok(event as u64)
+    }
+    fn event_destroy(&mut self, event: u64) -> CuResult<()> {
+        unsafe { chk((self.event_destroy)(event as *mut c_void)) }
+    }
+    fn event_elapsed_time(&mut self, start: u64, end: u64) -> CuResult<f32> {
+        let mut ms: f32 = 0.0;
+        unsafe {
+            chk((self.event_elapsed_time)(
+                &mut ms,
+                start as *mut c_void,
+                end as *mut c_void,
+            ))?
+        };
+        Ok(ms)
     }
 }

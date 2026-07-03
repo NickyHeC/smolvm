@@ -49,6 +49,12 @@ pub trait Backend: Send {
         params: &[Vec<u8>],
     ) -> CuResult<()>;
     fn ctx_synchronize(&mut self) -> CuResult<()>;
+    fn stream_create(&mut self, flags: u32) -> CuResult<u64>;
+    fn stream_destroy(&mut self, stream: u64) -> CuResult<()>;
+    fn stream_synchronize(&mut self, stream: u64) -> CuResult<()>;
+    fn event_create(&mut self, flags: u32) -> CuResult<u64>;
+    fn event_destroy(&mut self, event: u64) -> CuResult<()>;
+    fn event_elapsed_time(&mut self, start: u64, end: u64) -> CuResult<f32>;
 }
 
 /// Per-connection opaque→raw handle translation. Ids are dense and monotonic so
@@ -59,6 +65,8 @@ struct Session {
     modules: HashMap<u64, u64>,
     functions: HashMap<u64, u64>,
     contexts: HashMap<u64, u64>,
+    streams: HashMap<u64, u64>,
+    events: HashMap<u64, u64>,
 }
 
 impl Session {
@@ -133,6 +141,40 @@ fn dispatch(sess: &mut Session, b: &mut dyn Backend, req: Request) -> (i32, Resp
                 .map(|_| Response::Ok)
         }
         Request::CtxSynchronize => b.ctx_synchronize().map(|_| Response::Ok),
+        Request::StreamCreate { flags } => {
+            let raw = b.stream_create(flags)?;
+            let id = sess.mint();
+            sess.streams.insert(id, raw);
+            Ok(Response::Handle(id))
+        }
+        Request::StreamDestroy { stream } => {
+            let raw = raw(&sess.streams, stream)?;
+            b.stream_destroy(raw)?;
+            sess.streams.remove(&stream);
+            Ok(Response::Ok)
+        }
+        Request::StreamSynchronize { stream } => {
+            let raw = raw(&sess.streams, stream)?;
+            b.stream_synchronize(raw).map(|_| Response::Ok)
+        }
+        Request::EventCreate { flags } => {
+            let raw = b.event_create(flags)?;
+            let id = sess.mint();
+            sess.events.insert(id, raw);
+            Ok(Response::Handle(id))
+        }
+        Request::EventDestroy { event } => {
+            let raw = raw(&sess.events, event)?;
+            b.event_destroy(raw)?;
+            sess.events.remove(&event);
+            Ok(Response::Ok)
+        }
+        Request::EventElapsedTime { start, end } => {
+            let raw_start = raw(&sess.events, start)?;
+            let raw_end = raw(&sess.events, end)?;
+            b.event_elapsed_time(raw_start, raw_end)
+                .map(Response::Float)
+        }
     })();
     match r {
         Ok(resp) => (0, resp),
@@ -275,6 +317,24 @@ impl Backend for CpuBackend {
     }
     fn ctx_synchronize(&mut self) -> CuResult<()> {
         Ok(())
+    }
+    fn stream_create(&mut self, _flags: u32) -> CuResult<u64> {
+        Ok(self.handle())
+    }
+    fn stream_destroy(&mut self, _stream: u64) -> CuResult<()> {
+        Ok(())
+    }
+    fn stream_synchronize(&mut self, _stream: u64) -> CuResult<()> {
+        Ok(())
+    }
+    fn event_create(&mut self, _flags: u32) -> CuResult<u64> {
+        Ok(self.handle())
+    }
+    fn event_destroy(&mut self, _event: u64) -> CuResult<()> {
+        Ok(())
+    }
+    fn event_elapsed_time(&mut self, _start: u64, _end: u64) -> CuResult<f32> {
+        Ok(0.0)
     }
 }
 

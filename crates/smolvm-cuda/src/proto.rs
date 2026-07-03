@@ -36,6 +36,12 @@ pub enum Op {
     MemcpyDtoH = 0x33,
     LaunchKernel = 0x40,
     CtxSynchronize = 0x50,
+    StreamCreate = 0x51,
+    StreamDestroy = 0x52,
+    StreamSynchronize = 0x53,
+    EventCreate = 0x54,
+    EventDestroy = 0x55,
+    EventElapsedTime = 0x56,
 }
 
 impl Op {
@@ -55,6 +61,12 @@ impl Op {
             0x33 => Op::MemcpyDtoH,
             0x40 => Op::LaunchKernel,
             0x50 => Op::CtxSynchronize,
+            0x51 => Op::StreamCreate,
+            0x52 => Op::StreamDestroy,
+            0x53 => Op::StreamSynchronize,
+            0x54 => Op::EventCreate,
+            0x55 => Op::EventDestroy,
+            0x56 => Op::EventElapsedTime,
             _ => return None,
         })
     }
@@ -110,12 +122,32 @@ pub enum Request {
         params: Vec<Vec<u8>>,
     },
     CtxSynchronize,
+    StreamCreate {
+        flags: u32,
+    },
+    StreamDestroy {
+        stream: u64,
+    },
+    StreamSynchronize {
+        stream: u64,
+    },
+    EventCreate {
+        flags: u32,
+    },
+    EventDestroy {
+        event: u64,
+    },
+    /// Returns elapsed milliseconds between two events as an `f32`.
+    EventElapsedTime {
+        start: u64,
+        end: u64,
+    },
 }
 
 /// A decoded successful response body (the `status == 0` payload).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Response {
-    /// No return value beyond status (Init, CtxDestroy, MemFree, Memcpy*, Launch, Sync).
+    /// No return value beyond status.
     Ok,
     Count(i32),
     Name(String),
@@ -123,6 +155,7 @@ pub enum Response {
     Handle(u64),
     Dptr(u64),
     Data(Vec<u8>),
+    Float(f32),
 }
 
 // ---- low-level primitives -------------------------------------------------
@@ -137,6 +170,9 @@ fn w_u32(b: &mut Vec<u8>, v: u32) {
     b.extend_from_slice(&v.to_le_bytes());
 }
 fn w_u64(b: &mut Vec<u8>, v: u64) {
+    b.extend_from_slice(&v.to_le_bytes());
+}
+fn w_f32(b: &mut Vec<u8>, v: f32) {
     b.extend_from_slice(&v.to_le_bytes());
 }
 fn w_bytes(b: &mut Vec<u8>, v: &[u8]) {
@@ -178,6 +214,9 @@ impl<'a> Cur<'a> {
     }
     fn u64(&mut self) -> io::Result<u64> {
         Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+    }
+    fn f32(&mut self) -> io::Result<f32> {
+        Ok(f32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
     fn bytes(&mut self) -> io::Result<Vec<u8>> {
         let n = self.u64()? as usize;
@@ -303,6 +342,31 @@ pub fn encode_request(req: &Request) -> Vec<u8> {
             }
         }
         Request::CtxSynchronize => w_u8(&mut b, Op::CtxSynchronize as u8),
+        Request::StreamCreate { flags } => {
+            w_u8(&mut b, Op::StreamCreate as u8);
+            w_u32(&mut b, *flags);
+        }
+        Request::StreamDestroy { stream } => {
+            w_u8(&mut b, Op::StreamDestroy as u8);
+            w_u64(&mut b, *stream);
+        }
+        Request::StreamSynchronize { stream } => {
+            w_u8(&mut b, Op::StreamSynchronize as u8);
+            w_u64(&mut b, *stream);
+        }
+        Request::EventCreate { flags } => {
+            w_u8(&mut b, Op::EventCreate as u8);
+            w_u32(&mut b, *flags);
+        }
+        Request::EventDestroy { event } => {
+            w_u8(&mut b, Op::EventDestroy as u8);
+            w_u64(&mut b, *event);
+        }
+        Request::EventElapsedTime { start, end } => {
+            w_u8(&mut b, Op::EventElapsedTime as u8);
+            w_u64(&mut b, *start);
+            w_u64(&mut b, *end);
+        }
     }
     b
 }
@@ -353,6 +417,15 @@ pub fn decode_request(payload: &[u8]) -> io::Result<Request> {
             }
         }
         Op::CtxSynchronize => Request::CtxSynchronize,
+        Op::StreamCreate => Request::StreamCreate { flags: c.u32()? },
+        Op::StreamDestroy => Request::StreamDestroy { stream: c.u64()? },
+        Op::StreamSynchronize => Request::StreamSynchronize { stream: c.u64()? },
+        Op::EventCreate => Request::EventCreate { flags: c.u32()? },
+        Op::EventDestroy => Request::EventDestroy { event: c.u64()? },
+        Op::EventElapsedTime => Request::EventElapsedTime {
+            start: c.u64()?,
+            end: c.u64()?,
+        },
     })
 }
 
@@ -369,6 +442,7 @@ pub fn encode_response(status: i32, resp: &Response) -> Vec<u8> {
             Response::Name(s) => w_str(&mut b, s),
             Response::Bytes(v) | Response::Handle(v) | Response::Dptr(v) => w_u64(&mut b, *v),
             Response::Data(d) => w_bytes(&mut b, d),
+            Response::Float(v) => w_f32(&mut b, *v),
         }
     }
     b
@@ -390,12 +464,17 @@ pub fn decode_response(op: Op, payload: &[u8]) -> io::Result<(i32, Response)> {
         Op::ModuleLoadData | Op::ModuleGetFunction => Response::Handle(c.u64()?),
         Op::MemAlloc => Response::Dptr(c.u64()?),
         Op::MemcpyDtoH => Response::Data(c.bytes()?),
+        Op::StreamCreate | Op::EventCreate => Response::Handle(c.u64()?),
+        Op::EventElapsedTime => Response::Float(c.f32()?),
         Op::Init
         | Op::CtxDestroy
         | Op::MemFree
         | Op::MemcpyHtoD
         | Op::LaunchKernel
-        | Op::CtxSynchronize => Response::Ok,
+        | Op::CtxSynchronize
+        | Op::StreamDestroy
+        | Op::StreamSynchronize
+        | Op::EventDestroy => Response::Ok,
     };
     Ok((status, body))
 }
@@ -448,6 +527,15 @@ mod tests {
             ],
         });
         roundtrip(Request::CtxSynchronize);
+        roundtrip(Request::StreamCreate { flags: 1 });
+        roundtrip(Request::StreamDestroy { stream: 0xaa });
+        roundtrip(Request::StreamSynchronize { stream: 0xbb });
+        roundtrip(Request::EventCreate { flags: 0 });
+        roundtrip(Request::EventDestroy { event: 0xcc });
+        roundtrip(Request::EventElapsedTime {
+            start: 0x10,
+            end: 0x20,
+        });
     }
 
     #[test]
@@ -464,6 +552,12 @@ mod tests {
             (Op::MemAlloc, Response::Dptr(0x7f00_0000)),
             (Op::MemcpyDtoH, Response::Data(vec![9, 8, 7])),
             (Op::CtxSynchronize, Response::Ok),
+            (Op::StreamCreate, Response::Handle(42)),
+            (Op::StreamDestroy, Response::Ok),
+            (Op::StreamSynchronize, Response::Ok),
+            (Op::EventCreate, Response::Handle(99)),
+            (Op::EventDestroy, Response::Ok),
+            (Op::EventElapsedTime, Response::Float(1.5)),
         ] {
             let enc = encode_response(0, &resp);
             let (status, dec) = decode_response(op, &enc).expect("decode");

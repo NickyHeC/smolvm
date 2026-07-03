@@ -177,4 +177,46 @@ impl<S: Read + Write> Client<S> {
         self.call(&Request::CtxSynchronize, Op::CtxSynchronize)
             .map(|_| ())
     }
+
+    pub fn stream_create(&mut self, flags: u32) -> Result<u64> {
+        match self.call(&Request::StreamCreate { flags }, Op::StreamCreate)? {
+            Response::Handle(h) => Ok(h),
+            _ => Err(CudaRpcError::Protocol("expected Handle")),
+        }
+    }
+
+    pub fn stream_destroy(&mut self, stream: u64) -> Result<()> {
+        self.call(&Request::StreamDestroy { stream }, Op::StreamDestroy)
+            .map(|_| ())
+    }
+
+    pub fn stream_synchronize(&mut self, stream: u64) -> Result<()> {
+        self.call(
+            &Request::StreamSynchronize { stream },
+            Op::StreamSynchronize,
+        )
+        .map(|_| ())
+    }
+
+    pub fn event_create(&mut self, flags: u32) -> Result<u64> {
+        match self.call(&Request::EventCreate { flags }, Op::EventCreate)? {
+            Response::Handle(h) => Ok(h),
+            _ => Err(CudaRpcError::Protocol("expected Handle")),
+        }
+    }
+
+    pub fn event_destroy(&mut self, event: u64) -> Result<()> {
+        self.call(&Request::EventDestroy { event }, Op::EventDestroy)
+            .map(|_| ())
+    }
+
+    pub fn event_elapsed_time(&mut self, start: u64, end: u64) -> Result<f32> {
+        match self.call(
+            &Request::EventElapsedTime { start, end },
+            Op::EventElapsedTime,
+        )? {
+            Response::Float(ms) => Ok(ms),
+            _ => Err(CudaRpcError::Protocol("expected Float")),
+        }
+    }
 }
