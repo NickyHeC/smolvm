@@ -212,9 +212,7 @@ fn find_rpath_pinned_libs(rootfs: &std::path::Path) -> Vec<std::path::PathBuf> {
     // sonames, no layout heuristic required.
     if let Some(extra) = std::env::var_os(STAGE_EXTRA_DIRS_ENV) {
         for guest_dir in std::env::split_paths(&extra) {
-            let rel = guest_dir
-                .strip_prefix("/")
-                .unwrap_or(guest_dir.as_path());
+            let rel = guest_dir.strip_prefix("/").unwrap_or(guest_dir.as_path());
             let host_dir = rootfs.join(rel);
             let entries = match std::fs::read_dir(&host_dir) {
                 Ok(e) => e,
