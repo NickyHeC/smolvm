@@ -58,17 +58,11 @@ jobs:
             SKIP_LIBKRUNFW=1 GPU=1 ./scripts/build-libkrun-linux.sh
           fi
 
+      # Same gate CI runs on the committed libs (scripts/check-libkrun-glibc.sh),
+      # scoped to the arch just built. One source of truth for the floor check.
       - name: Assert glibc floor <= 2.35
-        run: |
-          so="lib/linux-${{ matrix.arch }}/libkrun.so"
-          maxv=$(objdump -T "$so" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' \
-            | sed 's/GLIBC_//' | sort -V | tail -1)
-          echo "max GLIBC required by $so: ${maxv:-none}"
-          if [ -n "$maxv" ] && [ "$(printf '%s\n2.35\n' "$maxv" | sort -V | tail -1)" != "2.35" ]; then
-            echo "::error::$so requires glibc $maxv (> 2.35) — floor not lowered"
-            exit 1
-          fi
-          echo "OK: glibc floor is <= 2.35"
+        run: SMOLVM_GLIBC_FLOOR_LIBS="lib/linux-${{ matrix.arch }}/libkrun.so" \
+          ./scripts/check-libkrun-glibc.sh
 
       - uses: actions/upload-artifact@v4
         with:

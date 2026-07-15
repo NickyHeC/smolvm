@@ -43,6 +43,10 @@ jobs:
           lfs: true
       - name: Bundled libkrun matches the pinned submodule
         run: ./scripts/check-libkrun-provenance.sh
+      # Gate the committed Linux libkrun glibc floor (<= 2.35). The release ships
+      # these libs as-is, so this is the floor users get (issue #636).
+      - name: Bundled libkrun glibc floor <= 2.35
+        run: ./scripts/check-libkrun-glibc.sh
       # nm (ELF), llvm-nm (Mach-O dylib), mingw objdump (PE dll exports).
       - name: Install symbol-reading tools
         run: |
