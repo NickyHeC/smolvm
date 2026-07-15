@@ -2071,6 +2071,98 @@ pub extern "C" fn cudaGraphDestroy(graph: *mut c_void) -> c_int {
         Err(e) => e,
     })
 }
+
+/// Manual graph-build APIs. Conda `libtorch_cuda.so` version-requires these at
+/// import; stream-capture (Begin/EndCapture) is the path we actually forward.
+/// Return NotSupported so callers that poke the builder API fall back.
+fn graph_add_node_unsupported(p_graph_node: *mut *mut c_void) -> c_int {
+    if !p_graph_node.is_null() {
+        unsafe { *p_graph_node = std::ptr::null_mut() };
+    }
+    set_last(801) // cudaErrorNotSupported
+}
+
+#[no_mangle]
+pub extern "C" fn cudaGraphAddKernelNode(
+    p_graph_node: *mut *mut c_void,
+    _graph: *mut c_void,
+    _deps: *const *const c_void,
+    _num_deps: usize,
+    _node_params: *const c_void,
+) -> c_int {
+    graph_add_node_unsupported(p_graph_node)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaGraphAddHostNode(
+    p_graph_node: *mut *mut c_void,
+    _graph: *mut c_void,
+    _deps: *const *const c_void,
+    _num_deps: usize,
+    _node_params: *const c_void,
+) -> c_int {
+    graph_add_node_unsupported(p_graph_node)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaGraphAddEventRecordNode(
+    p_graph_node: *mut *mut c_void,
+    _graph: *mut c_void,
+    _deps: *const *const c_void,
+    _num_deps: usize,
+    _event: *mut c_void,
+) -> c_int {
+    graph_add_node_unsupported(p_graph_node)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaGraphAddEventWaitNode(
+    p_graph_node: *mut *mut c_void,
+    _graph: *mut c_void,
+    _deps: *const *const c_void,
+    _num_deps: usize,
+    _event: *mut c_void,
+) -> c_int {
+    graph_add_node_unsupported(p_graph_node)
+}
+
+/// User-object retain: no-op success. Needed so conda torch links; stream-capture
+/// workloads we care about don't depend on real user-object refcounting.
+#[no_mangle]
+pub extern "C" fn cudaGraphRetainUserObject(
+    _graph: *mut c_void,
+    _object: *mut c_void,
+    _count: c_uint,
+    _flags: c_uint,
+) -> c_int {
+    set_last(CUDA_SUCCESS)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaUserObjectCreate(
+    object_out: *mut *mut c_void,
+    _ptr: *mut c_void,
+    _destroy: *mut c_void,
+    _initial_refcount: c_uint,
+    _flags: c_uint,
+) -> c_int {
+    // Sentinel non-null handle so callers that only stash the pointer succeed.
+    set_last(unsafe { out(object_out, std::ptr::without_provenance_mut(1)) })
+}
+
+#[no_mangle]
+pub extern "C" fn cudaStreamUpdateCaptureDependencies(
+    _stream: *mut c_void,
+    _dependencies: *mut *mut c_void,
+    _num_dependencies: usize,
+    _flags: c_uint,
+) -> c_int {
+    // Capture dependency edges are tracked host-side during Begin/EndCapture;
+    // accepting this as a no-op keeps conda torch linking and avoids aborting
+    // a capture that already flows through our deferred path.
+    set_last(CUDA_SUCCESS)
+}
+
 #[no_mangle]
 pub extern "C" fn cudaThreadExchangeStreamCaptureMode(mode: *mut c_int) -> c_int {
     // PyTorch's allocator wraps capture-time cudaMalloc in a relaxed-mode
