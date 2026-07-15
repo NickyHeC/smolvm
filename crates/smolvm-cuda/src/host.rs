@@ -483,6 +483,14 @@ fn path3_enabled() -> bool {
     std::env::var_os("SMOLVM_CUDA_PATH3").is_some()
 }
 
+/// Path 3 density opt-in: a clone worker SHARES the golden's loaded (weight)
+/// VMM ranges read-only (IPC-import without copy) instead of privately copying
+/// them. Off by default (the proven path privately copies every range —
+/// correct + isolated but N copies of the weights).
+pub fn path3_share_weights_enabled() -> bool {
+    std::env::var_os("SMOLVM_CUDA_PATH3_SHARE_WEIGHTS").is_some()
+}
+
 /// P0 transport-viability instrumentation. Counts every dispatched CUDA RPC so we
 /// can derive calls-per-token (the number that decides whether CUDA-over-network
 /// survives WAN round-trips). `SMOLVM_CUDA_RPC_STATS=1` logs the running count with
@@ -560,10 +568,47 @@ type VmmRanges = std::sync::Mutex<HashMap<u64, u64>>;
 /// worker process reconstructs memory at the golden's EXACT VAs (M2). Reservations
 /// (va→size) it re-reserves; maps (va→(size, physical handle)) whose handle the
 /// daemon exports to an fd for the clone to IPC-import/copy at that VA.
+/// Per-chunk H2D upload record for the share-safety verdict (see
+/// `GoldenLayout::maps`). `segs` = sorted, disjoint, chunk-relative
+/// `(start, end, crc)` of every uploaded range (`crc == 0` marks a segment
+/// whose bytes weren't dispatch-visible — shm/GPA H2D — and therefore can
+/// never be verified). `verified` caches the fork-time content check.
+#[derive(Default, Clone)]
+struct ChunkCover {
+    size: u64,
+    handle: u64,
+    segs: Vec<(u64, u64, u64)>,
+    verified: Option<bool>,
+}
+
+impl ChunkCover {
+    /// Upload segments tile the chunk exactly and every segment is verifiable.
+    fn covered_exactly(&self) -> bool {
+        let mut expect = 0;
+        for &(s, e, crc) in &self.segs {
+            if s != expect || crc == 0 {
+                return false;
+            }
+            expect = e;
+        }
+        expect == self.size
+    }
+}
+
 #[derive(Default)]
 struct GoldenLayout {
     reservations: HashMap<u64, u64>,
-    maps: HashMap<u64, (u64, u64)>,
+    /// va → per-chunk H2D coverage + share verdict. A chunk is a share
+    /// CANDIDATE only if its recorded upload segments tile it exactly; it is
+    /// share-SAFE only once the daemon verifies (at fork time) that its device
+    /// content still equals what the H2Ds uploaded, byte for byte. Coverage
+    /// alone is NOT enough: under `expandable_segments` torch frees weight
+    /// bytes and reuses them for MUTABLE tensors (proven: LoRA adapters inside
+    /// fully H2D-covered chunks — the bitsandbytes optimizer then writes the
+    /// shared physical and the update leaks into every later fork; also RMS
+    /// LayerNorm activations packed into partial chunks). A kernel write
+    /// changes content → CRC mismatch → the chunk degrades to private.
+    maps: HashMap<u64, ChunkCover>,
     /// M3a: golden module handle → module image bytes (to reload in the worker).
     modules: HashMap<u64, Vec<u8>>,
     /// M3a: golden function handle → (module handle, name) — the worker re-resolves
@@ -651,15 +696,57 @@ fn layout_handoff_register(l: &std::sync::Arc<LayoutCell>, my_token: u64) {
     reg.insert(my_token, std::sync::Arc::downgrade(l));
 }
 
-/// `(reservations: [(va,size)], maps: [(va,size,handle)])` for `token`'s golden.
+/// One VMM chunk in the fork handoff (see [`layout_handoff_snapshot`]).
+pub struct HandoffChunk {
+    pub va: u64,
+    pub size: u64,
+    pub handle: u64,
+    /// Upload segments tile the chunk exactly (share CANDIDATE — safe to share
+    /// only after fork-time content verification against `segs`).
+    pub candidate: bool,
+    /// Chunk-relative `(start, end, crc)` upload segments (crc from [`fnv64`]).
+    pub segs: Vec<(u64, u64, u64)>,
+    /// Cached fork-time content-verification verdict (golden frozen → stable).
+    pub verified: Option<bool>,
+}
+
+/// `(reservations: [(va,size)], chunks)` for `token`'s golden.
 #[allow(clippy::type_complexity)]
-pub fn layout_handoff_snapshot(token: u64) -> Option<(Vec<(u64, u64)>, Vec<(u64, u64, u64)>)> {
+pub fn layout_handoff_snapshot(token: u64) -> Option<(Vec<(u64, u64)>, Vec<HandoffChunk>)> {
     let reg = LAYOUT_HANDOFF.lock().unwrap();
     let l = reg.as_ref()?.get(&token)?.upgrade()?;
     let g = l.lock().unwrap();
     let resvs = g.reservations.iter().map(|(&v, &s)| (v, s)).collect();
-    let maps = g.maps.iter().map(|(&v, &(s, h))| (v, s, h)).collect();
+    let maps = g
+        .maps
+        .iter()
+        .map(|(&va, c)| HandoffChunk {
+            va,
+            size: c.size,
+            handle: c.handle,
+            candidate: c.covered_exactly(),
+            segs: c.segs.clone(),
+            verified: c.verified,
+        })
+        .collect();
     Some((resvs, maps))
+}
+
+/// Cache the fork-time content-verification verdict for `va` in `token`'s
+/// golden layout, so later forks of the (frozen) golden skip the D2H+CRC pass.
+pub fn layout_set_share_verdict(token: u64, va: u64, ok: bool) {
+    let reg = LAYOUT_HANDOFF.lock().unwrap();
+    let Some(l) = reg
+        .as_ref()
+        .and_then(|r| r.get(&token))
+        .and_then(|w| w.upgrade())
+    else {
+        return;
+    };
+    let mut g = l.lock().unwrap();
+    if let Some(c) = g.maps.get_mut(&va) {
+        c.verified = Some(ok);
+    }
 }
 
 /// M3a: golden handle-reconstruction snapshot for `token`'s golden —
@@ -691,48 +778,172 @@ pub fn module_handoff_snapshot(
 }
 
 // M3a: per-worker (thread-local) translation of the golden's inherited raw
-// module/function handles → this worker's reloaded ones. Empty (identity) unless
-// a Path-3 clone worker installed it via `set_handle_trans`.
+// module/function handles → this worker's reloaded ones. LAZY: a real model has
+// ~400 modules; reloading them ALL synchronously before serving stalls the clone
+// worker ~2s, and the clone's connection breaks during that silent window. So we
+// hold the source images/metadata here and reload each module (and re-resolve
+// each function) on FIRST USE at the raw_module/raw_fn_h choke points. Empty
+// (identity) unless a Path-3 clone worker installed it via `set_handle_trans`.
 type HandleMap = std::cell::RefCell<HashMap<u64, u64>>;
+type ImageMap = std::cell::RefCell<HashMap<u64, Vec<u8>>>;
+type MetaMap = std::cell::RefCell<HashMap<u64, (u64, String)>>;
 thread_local! {
     static FUNC_TRANS: HandleMap = std::cell::RefCell::new(HashMap::new());
     static MOD_TRANS: HandleMap = std::cell::RefCell::new(HashMap::new());
     static STREAM_TRANS: HandleMap = std::cell::RefCell::new(HashMap::new());
     static EVENT_TRANS: HandleMap = std::cell::RefCell::new(HashMap::new());
+    // Lazy sources: golden module handle → image; golden fn handle → (module, name).
+    static MOD_IMAGES: ImageMap = std::cell::RefCell::new(HashMap::new());
+    static FUNC_META: MetaMap = std::cell::RefCell::new(HashMap::new());
+    // M2: golden VMM physical handle → THIS worker's handle backing the same VA.
+    // `None` = not a clone worker (raw passthrough). The clone frees inherited
+    // chunks by their GOLDEN handle values; passing one raw into cuMemRelease in
+    // the worker's context SEGFAULTS the driver (SEGV_MAPERR inside cuMemRelease).
+    static VMM_TRANS: std::cell::RefCell<Option<HashMap<u64, u64>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
-/// Install a clone worker's golden→worker handle maps (functions, modules,
-/// streams, events); each applied at the matching dispatch choke point.
+/// Install a clone worker's golden→worker VMM physical-handle map (M2). Until
+/// installed, MemMap/MemRelease pass handles through raw (daemon/golden path).
+pub fn set_vmm_trans(map: HashMap<u64, u64>) {
+    VMM_TRANS.with(|m| *m.borrow_mut() = Some(map));
+}
+
+/// Install a clone worker's golden→worker handle reconstruction. Modules are
+/// reloaded / functions re-resolved LAZILY from `mod_images` / `func_meta` at
+/// first use; streams/events are already-recreated golden→worker maps (eager,
+/// few). Clears any prior worker's caches.
 pub fn set_handle_trans(
-    funcs: Vec<(u64, u64)>,
-    mods: Vec<(u64, u64)>,
+    mod_images: Vec<(u64, Vec<u8>)>,
+    func_meta: Vec<(u64, u64, String)>,
     streams: Vec<(u64, u64)>,
     events: Vec<(u64, u64)>,
 ) {
-    fn put(cell: &'static std::thread::LocalKey<HandleMap>, v: Vec<(u64, u64)>) {
+    fn put_h(cell: &'static std::thread::LocalKey<HandleMap>, v: Vec<(u64, u64)>) {
         cell.with(|m| {
             let mut m = m.borrow_mut();
             m.clear();
             m.extend(v);
         });
     }
-    put(&FUNC_TRANS, funcs);
-    put(&MOD_TRANS, mods);
-    put(&STREAM_TRANS, streams);
-    put(&EVENT_TRANS, events);
+    MOD_TRANS.with(|m| m.borrow_mut().clear());
+    FUNC_TRANS.with(|m| m.borrow_mut().clear());
+    MOD_IMAGES.with(|m| {
+        let mut m = m.borrow_mut();
+        m.clear();
+        m.extend(mod_images);
+    });
+    FUNC_META.with(|m| {
+        let mut m = m.borrow_mut();
+        m.clear();
+        m.extend(func_meta.into_iter().map(|(f, gm, n)| (f, (gm, n))));
+    });
+    put_h(&STREAM_TRANS, streams);
+    put_h(&EVENT_TRANS, events);
 }
 
-fn xlat_func(h: u64) -> u64 {
-    FUNC_TRANS.with(|m| m.borrow().get(&h).copied().unwrap_or(h))
+/// Lazily reload the golden module `golden` in THIS worker's context (once),
+/// caching golden→worker. Identity for a non-clone / unknown handle.
+fn xlat_mod(b: &mut dyn Backend, golden: u64) -> u64 {
+    if let Some(w) = MOD_TRANS.with(|m| m.borrow().get(&golden).copied()) {
+        return w;
+    }
+    let Some(mut image) = MOD_IMAGES.with(|m| m.borrow().get(&golden).cloned()) else {
+        return golden;
+    };
+    // cuModuleLoadData treats a PTX image as a C string; ensure a trailing NUL.
+    if image.last() != Some(&0) {
+        image.push(0);
+    }
+    match b.module_load_data(&image) {
+        Ok(w) => {
+            MOD_TRANS.with(|m| {
+                m.borrow_mut().insert(golden, w);
+            });
+            w
+        }
+        Err(e) => {
+            eprintln!("[M3a-lazy] module reload failed: e={e}");
+            // NULL, not the golden handle: the driver rejects a NULL module with
+            // a clean error, but DEREFERENCES a foreign-context handle (SIGSEGV
+            // in cuModuleGetFunction — seen when a sticky fault poisoned reloads).
+            0
+        }
+    }
 }
-fn xlat_mod(h: u64) -> u64 {
-    MOD_TRANS.with(|m| m.borrow().get(&h).copied().unwrap_or(h))
+
+/// Lazily re-resolve the golden function `golden` (loading its module first if
+/// needed), caching golden→worker. Identity for a non-clone / unknown handle.
+fn xlat_func(b: &mut dyn Backend, golden: u64) -> u64 {
+    if let Some(w) = FUNC_TRANS.with(|m| m.borrow().get(&golden).copied()) {
+        return w;
+    }
+    let Some((gm, name)) = FUNC_META.with(|m| m.borrow().get(&golden).cloned()) else {
+        return golden;
+    };
+    let wm = xlat_mod(b, gm);
+    if wm == 0 {
+        return 0; // module reload failed; a NULL function errors cleanly
+    }
+    match b.module_get_function(wm, &name) {
+        Ok(w) => {
+            FUNC_TRANS.with(|m| {
+                m.borrow_mut().insert(golden, w);
+            });
+            w
+        }
+        Err(e) => {
+            eprintln!("[M3a-lazy] function re-resolve failed: name={name} e={e}");
+            // NULL, not the golden handle (see xlat_mod): fail with a clean
+            // driver error rather than a foreign-handle dereference.
+            0
+        }
+    }
 }
 fn xlat_stream(h: u64) -> u64 {
     STREAM_TRANS.with(|m| m.borrow().get(&h).copied().unwrap_or(h))
 }
 fn xlat_event(h: u64) -> u64 {
     EVENT_TRANS.with(|m| m.borrow().get(&h).copied().unwrap_or(h))
+}
+
+/// Path 3: record this H2D's coverage (+ content CRC) into every golden VMM
+/// chunk it overlaps (see `GoldenLayout.maps`). No-op unless Path 3 is
+/// tracking a golden layout.
+fn mark_loaded_vmm(layout: &LayoutCell, dptr: u64, nbytes: u64, data: Option<&[u8]>) {
+    let end = dptr.saturating_add(nbytes);
+    let mut g = layout.lock().unwrap();
+    for (&base, c) in g.maps.iter_mut() {
+        let (abs_s, abs_e) = (dptr.max(base), end.min(base + c.size));
+        if abs_s >= abs_e {
+            continue;
+        }
+        // CRC the PER-CHUNK SLICE of the payload: one H2D spans many chunks,
+        // and each chunk must record the hash of its own bytes (crc 0 =
+        // unverifiable → never shared; used when bytes aren't dispatch-visible).
+        let crc = data.map_or(0, |d| {
+            fnv64(&d[(abs_s - dptr) as usize..(abs_e - dptr) as usize])
+        });
+        let (s, e) = (abs_s - base, abs_e - base);
+        // An overlapping re-upload invalidates the prior segment's CRC for its
+        // surviving bytes, so overlapped segments are dropped whole
+        // (conservative: lost coverage → the chunk stays private).
+        c.segs.retain(|&(a, b, _)| b <= s || a >= e);
+        c.segs.push((s, e, crc));
+        c.segs.sort_unstable();
+        c.verified = None;
+    }
+}
+
+/// FNV-1a 64-bit content hash (0 remapped to 1 — segment CRC 0 means
+/// "unverifiable", reserved for uploads whose bytes dispatch can't see).
+pub fn fnv64(data: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in data {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h.max(1)
 }
 
 /// Mark the allocation containing `dptr` as loaded (H2D-written → read-only
@@ -1376,13 +1587,13 @@ fn dispatch(sess: &mut Session, b: &mut dyn Backend, req: Request) -> (i32, Resp
     // connection stays valid on another (this is what lets a forked VM clone
     // reconnect and keep using its parent's loaded modules). The tables only
     // translate ids minted by pre-raw guests; a raw value passes through.
-    fn raw_module(sess: &Session, m: u64) -> u64 {
-        // Path 3 (M3a): a clone worker translates the golden's inherited raw module
-        // handle to its own reloaded module; identity otherwise.
-        xlat_mod(sess.modules.get(&m).copied().unwrap_or(m))
+    fn raw_module(sess: &Session, b: &mut dyn Backend, m: u64) -> u64 {
+        // Path 3 (M3a): a clone worker lazily reloads + translates the golden's
+        // inherited raw module handle to its own; identity otherwise.
+        xlat_mod(b, sess.modules.get(&m).copied().unwrap_or(m))
     }
-    fn raw_fn_h(sess: &Session, f: u64) -> u64 {
-        xlat_func(sess.functions.get(&f).copied().unwrap_or(f))
+    fn raw_fn_h(sess: &Session, b: &mut dyn Backend, f: u64) -> u64 {
+        xlat_func(b, sess.functions.get(&f).copied().unwrap_or(f))
     }
     fn raw_graph(sess: &Session, h: u64) -> u64 {
         // Virtual graph/exec handle → real; untagged values pass through.
@@ -1583,7 +1794,7 @@ fn dispatch(sess: &mut Session, b: &mut dyn Backend, req: Request) -> (i32, Resp
             Ok(Response::Handle(raw))
         }
         Request::ModuleGetFunction { module, name } => {
-            let raw_mod = raw_module(sess, module);
+            let raw_mod = raw_module(sess, b, module);
             // Raw CUfunction on the wire: valid across connections in the shared
             // primary context, so a forked clone keeps its parent's functions.
             let raw_fn = b.module_get_function(raw_mod, &name)?;
@@ -1597,14 +1808,14 @@ fn dispatch(sess: &mut Session, b: &mut dyn Backend, req: Request) -> (i32, Resp
             Ok(Response::Handle(raw_fn))
         }
         Request::ModuleUnload { module } => {
-            let raw_mod = raw_module(sess, module);
+            let raw_mod = raw_module(sess, b, module);
             b.module_unload(raw_mod)?;
             sess.owned_modules.remove(&raw_mod);
             sess.modules.remove(&module);
             Ok(Response::Ok)
         }
         Request::FuncGetParamInfo { function } => {
-            let raw_fn = raw_fn_h(sess, function);
+            let raw_fn = raw_fn_h(sess, b, function);
             let sizes = b.func_get_param_info(raw_fn)?;
             let mut out = Vec::with_capacity(sizes.len() * 4);
             for s in sizes {
@@ -1617,12 +1828,12 @@ fn dispatch(sess: &mut Session, b: &mut dyn Backend, req: Request) -> (i32, Resp
             attrib,
             value,
         } => {
-            let raw_fn = raw_fn_h(sess, function);
+            let raw_fn = raw_fn_h(sess, b, function);
             b.func_set_attribute(raw_fn, attrib, value)
                 .map(|_| Response::Ok)
         }
         Request::FuncGetAttribute { function, attrib } => {
-            let raw_fn = raw_fn_h(sess, function);
+            let raw_fn = raw_fn_h(sess, b, function);
             b.func_get_attribute(raw_fn, attrib).map(Response::Count)
         }
         Request::MemAlloc { bytes } => {
@@ -1650,6 +1861,9 @@ fn dispatch(sess: &mut Session, b: &mut dyn Backend, req: Request) -> (i32, Resp
         }
         Request::MemcpyHtoD { dptr, stream, data } => {
             mark_loaded(&sess.alloc_table, dptr); // H2D write → weight/read-only
+            if path3_enabled() {
+                mark_loaded_vmm(&sess.golden_layout, dptr, data.len() as u64, Some(&data));
+            }
             b.memcpy_htod(dptr, &data, raw_stream(sess, stream)?)
                 .map(|_| Response::Ok)
         }
@@ -1675,7 +1889,7 @@ fn dispatch(sess: &mut Session, b: &mut dyn Backend, req: Request) -> (i32, Resp
             stream,
             params,
         } => {
-            let raw_fn = raw_fn_h(sess, function);
+            let raw_fn = raw_fn_h(sess, b, function);
             let raw_str = raw_stream(sess, stream)?;
             b.launch_kernel(raw_fn, grid, block, shared_bytes, raw_str, &params)
                 .map(|_| Response::Ok)
@@ -2005,6 +2219,11 @@ fn dispatch(sess: &mut Session, b: &mut dyn Backend, req: Request) -> (i32, Resp
             stream,
         } => {
             mark_loaded(&sess.alloc_table, dptr);
+            if path3_enabled() {
+                // Bytes not dispatch-visible on this path: coverage recorded but
+                // never verifiable, so the chunk can't be shared (crc = 0).
+                mark_loaded_vmm(&sess.golden_layout, dptr, size, None);
+            }
             b.memcpy_shm_htod(dptr, offset, size, raw_stream(sess, stream)?)
                 .map(|_| Response::Ok)
         }
@@ -2022,6 +2241,10 @@ fn dispatch(sess: &mut Session, b: &mut dyn Backend, req: Request) -> (i32, Resp
             segments,
         } => {
             mark_loaded(&sess.alloc_table, dptr);
+            if path3_enabled() {
+                let n: u64 = segments.iter().map(|&(_, len)| len).sum();
+                mark_loaded_vmm(&sess.golden_layout, dptr, n, None); // see ShmHtoD
+            }
             b.memcpy_gpa_htod(dptr, &segments, raw_stream(sess, stream)?)
                 .map(|_| Response::Ok)
         }
@@ -2070,18 +2293,29 @@ fn dispatch(sess: &mut Session, b: &mut dyn Backend, req: Request) -> (i32, Resp
             size,
             offset,
             handle,
-        } => b.mem_map(va, size, offset, handle).map(|_| {
-            sess.owned_vmm_maps.insert(va, size);
-            sess.vmm_ranges.lock().unwrap().insert(va, size);
-            // Path 3 (M2): record va→(size, physical handle) so the daemon can
-            // export this physical to an fd for a clone worker to import at `va`.
-            sess.golden_layout
-                .lock()
-                .unwrap()
-                .maps
-                .insert(va, (size, handle));
-            Response::Ok
-        }),
+        } => {
+            // Path 3 worker: an inherited golden handle must map via the worker's
+            // own physical (raw golden values are invalid in this context).
+            let handle = VMM_TRANS
+                .with(|m| m.borrow().as_ref().and_then(|t| t.get(&handle).copied()))
+                .unwrap_or(handle);
+            b.mem_map(va, size, offset, handle).map(|_| {
+                sess.owned_vmm_maps.insert(va, size);
+                sess.vmm_ranges.lock().unwrap().insert(va, size);
+                // Path 3 (M2): record va→(size, physical handle) so the daemon can
+                // export this physical to an fd for a clone worker to import at `va`.
+                // coverage starts at 0 bytes; H2Ds accumulate it (see mark_loaded_vmm).
+                sess.golden_layout.lock().unwrap().maps.insert(
+                    va,
+                    ChunkCover {
+                        size,
+                        handle,
+                        ..ChunkCover::default()
+                    },
+                );
+                Response::Ok
+            })
+        }
         Request::MemSetAccess { va, size, device } => {
             b.mem_set_access(va, size, device).map(|_| Response::Ok)
         }
@@ -2092,8 +2326,28 @@ fn dispatch(sess: &mut Session, b: &mut dyn Backend, req: Request) -> (i32, Resp
             b.mem_unmap(va, size).map(|_| Response::Ok)
         }
         Request::MemRelease { handle } => {
-            sess.owned_vmm_handles.remove(&handle);
-            b.mem_release(handle).map(|_| Response::Ok)
+            let created_here = sess.owned_vmm_handles.remove(&handle).is_some();
+            // Path 3 worker: translate an inherited golden handle to the worker
+            // handle backing that chunk (consumed: releasing twice is a no-op).
+            // A handle neither translated nor created in this process is a stale
+            // golden value we can't resolve — dropped, NOT passed to the driver
+            // (cuMemRelease on a foreign-context handle segfaults, not errors).
+            let resolved = VMM_TRANS.with(|m| match m.borrow_mut().as_mut() {
+                Some(t) => match t.remove(&handle) {
+                    Some(w) => Some(Some(w)),
+                    None if created_here => Some(Some(handle)),
+                    None => Some(None),
+                },
+                None => None,
+            });
+            match resolved {
+                Some(Some(h)) => b.mem_release(h).map(|_| Response::Ok),
+                Some(None) => {
+                    eprintln!("[M2] MemRelease: unknown inherited handle {handle:#x} → no-op");
+                    Ok(Response::Ok)
+                }
+                None => b.mem_release(handle).map(|_| Response::Ok),
+            }
         }
         Request::MemAddressFree { va, size } => {
             sess.owned_vmm_reservations.remove(&va);
