@@ -61,8 +61,9 @@ jobs:
       # Same gate CI runs on the committed libs (scripts/check-libkrun-glibc.sh),
       # scoped to the arch just built. One source of truth for the floor check.
       - name: Assert glibc floor <= 2.35
-        run: SMOLVM_GLIBC_FLOOR_LIBS="lib/linux-${{ matrix.arch }}/libkrun.so" \
-          ./scripts/check-libkrun-glibc.sh
+        env:
+          SMOLVM_GLIBC_FLOOR_LIBS: lib/linux-${{ matrix.arch }}/libkrun.so
+        run: ./scripts/check-libkrun-glibc.sh
 
       - uses: actions/upload-artifact@v4
         with:
