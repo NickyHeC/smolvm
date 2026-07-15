@@ -87,7 +87,11 @@ jobs:
   build-cuda:
     name: Build CUDA shims (${{ matrix.arch }})
     needs: ci
-    runs-on: ubuntu-latest
+    # 22.04 (glibc 2.35), NOT ubuntu-latest (24.04 = 2.39): the shims are glibc
+    # cdylibs linked here, so the build host's glibc is their runtime floor. A
+    # 2.39 shim breaks common workload guests (Debian 12 = 2.36, Ubuntu 22.04 =
+    # 2.35). Same reasoning as build-dist / build-libkrun.
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         include:
