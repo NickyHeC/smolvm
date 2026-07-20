@@ -1429,6 +1429,7 @@ fn translate_dptrs(trans: &[(u64, u64, u64)], req: Request) -> Request {
 /// Serve one CUDA-RPC connection to completion (until the peer closes). Each
 /// request is dispatched to `backend`; returns on clean EOF.
 pub fn serve<S: Read + Write>(stream: S, backend: &mut dyn Backend) -> std::io::Result<()> {
+    crate::diag::ensure_watchdog();
     let mut sess = Session::default();
     let r = serve_inner(stream, backend, &mut sess);
     // The connection is over (guest exit, crash, or transport error): free
@@ -1455,7 +1456,9 @@ fn serve_inner<S: Read + Write>(
                 if std::env::var_os("SMOLVM_CUDA_HOST_OPLOG").is_some() {
                     eprintln!("[op~] 0x{:02x} len={}", payload[1], payload.len());
                 }
+                crate::diag::note_dispatch_start(payload[1]);
                 let (status, _) = dispatch(sess, backend, req);
+                crate::diag::note_dispatch_end();
                 if status != 0 && std::env::var_os("SMOLVM_CUDA_HOST_OPLOG").is_some() {
                     eprintln!("[op~!] status={status}");
                 }
@@ -1506,7 +1509,9 @@ fn serve_inner<S: Read + Write>(
                 if rtt > 0 {
                     std::thread::sleep(std::time::Duration::from_micros(rtt));
                 }
+                crate::diag::note_dispatch_start(payload[0]);
                 let (status, resp) = dispatch(sess, backend, req);
+                crate::diag::note_dispatch_end();
                 if status != 0 && std::env::var_os("SMOLVM_CUDA_HOST_OPLOG").is_some() {
                     eprintln!("[op!] status={status}");
                 }
@@ -1613,7 +1618,9 @@ fn serve_rings<S: Read + Write>(
             rings.resp.take_parked()
         }
         if bytes.len() <= crate::ring::INLINE_MAX {
+            let mut sw = crate::diag::StallWatch::new("host_resp_push");
             while !rings.resp.try_push(bytes, 0) {
+                sw.tick(); // guest not draining the response ring
                 std::hint::spin_loop(); // guest drains sync responses promptly
             }
             return kick(stream);
@@ -1629,13 +1636,16 @@ fn serve_rings<S: Read + Write>(
             let mut hdr = [0u8; 16];
             hdr[..8].copy_from_slice(&(total as u64).to_le_bytes());
             hdr[8..].copy_from_slice(&(chunk as u64).to_le_bytes());
+            let mut sw = crate::diag::StallWatch::with_detail("host_resp_push_big", total as u64);
             while !rings.resp.try_push(&hdr, LEN_INDIRECT) {
+                sw.tick(); // guest not draining the response ring
                 std::hint::spin_loop();
             }
             kick(stream)?;
             off += chunk;
             if off < total {
                 // Await the guest's continue record before refilling.
+                let mut sw = crate::diag::StallWatch::new("host_continue_wait");
                 loop {
                     if let Some((p, f)) = rings.req.try_pop() {
                         if f & LEN_INDIRECT != 0 && p == [0xFF; 16] {
@@ -1643,6 +1653,7 @@ fn serve_rings<S: Read + Write>(
                         }
                         return Err(std::io::Error::other("ring: expected continue"));
                     }
+                    sw.tick(); // guest not posting the continue record
                     std::hint::spin_loop();
                 }
             }
@@ -1730,7 +1741,9 @@ fn serve_rings<S: Read + Write>(
                 if oplog {
                     eprintln!("[op~] 0x{:02x} len={}", frame[1], frame.len());
                 }
+                crate::diag::note_dispatch_start(frame[1]);
                 let (status, _) = dispatch(sess, backend, req);
+                crate::diag::note_dispatch_end();
                 if status != 0 {
                     if oplog {
                         eprintln!("[op~!] status={status}");
@@ -1759,7 +1772,9 @@ fn serve_rings<S: Read + Write>(
                 if oplog {
                     eprintln!("[op] 0x{:02x} len={}", frame[0], frame.len());
                 }
+                crate::diag::note_dispatch_start(frame[0]);
                 let (status, resp) = dispatch(sess, backend, req);
+                crate::diag::note_dispatch_end();
                 if status != 0 && oplog {
                     eprintln!("[op!] status={status}");
                 }

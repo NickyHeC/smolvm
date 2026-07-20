@@ -283,7 +283,9 @@ impl<S: Read + Write> Client<S> {
         use crate::ring::{INLINE_MAX, LEN_INDIRECT};
         if frame.len() <= INLINE_MAX {
             let ring = self.ring.as_ref().expect("ring transport");
+            let mut sw = crate::diag::StallWatch::with_detail("guest_req_push", frame[0] as u64);
             while !ring.req.try_push(frame, 0) {
+                sw.tick(); // host not draining the request ring
                 std::hint::spin_loop(); // host drains continuously
             }
             if ring.req.take_parked() {
@@ -312,7 +314,10 @@ impl<S: Read + Write> Client<S> {
                 let mut rec = [0u8; 16];
                 rec[..8].copy_from_slice(&(total as u64).to_le_bytes());
                 rec[8..].copy_from_slice(&(chunk as u64).to_le_bytes());
+                let mut sw =
+                    crate::diag::StallWatch::with_detail("guest_req_push_big", total as u64);
                 while !ring.req.try_push(&rec, LEN_INDIRECT) {
+                    sw.tick(); // host not draining the request ring
                     std::hint::spin_loop();
                 }
                 if ring.req.take_parked() {

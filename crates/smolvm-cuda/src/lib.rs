@@ -11,6 +11,8 @@
 //! pull only `proto` + `client` (no `libloading`), keeping the musl build lean.
 
 pub mod client;
+/// Opt-in stall/wedge diagnostics for the RPC transport (issue #667).
+pub mod diag;
 pub mod proto;
 /// Shared-memory command/completion rings (low-latency in-VM transport).
 pub mod ring;
