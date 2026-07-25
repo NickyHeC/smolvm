@@ -400,21 +400,17 @@ it knows the `vecadd` test kernel), so the transport stays testable anywhere.
 On `--cuda`, the agent bind-mounts the guest shims over the NVIDIA libraries it
 finds in the **image rootfs at pull time**
 (see [`crates/smolvm-agent/src/cuda.rs`](crates/smolvm-agent/src/cuda.rs),
-`find_rpath_pinned_libs`). It scans the pip-wheel layout only —
+`find_rpath_pinned_libs`). Supported layouts include pip NVIDIA wheels under
 `.../site-packages/nvidia/*/lib/{libcudart,libcublas,libcublasLt,libcudnn}.so.*`
-— and overlays the shim there because PyTorch RPATH-pins those sonames ahead of
-`LD_LIBRARY_PATH`. For this to work the image must **already contain the pip
-`torch` + `nvidia-*` wheels when smolvm pulls it**:
-
-```dockerfile
-# worker image — torch present at pull time so staging can overlay the wheels
-FROM python:3.11-slim-bookworm
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu124
-```
+and conda libraries under `/opt/conda/lib` and `/opt/conda/pkgs/*/lib`.
+PyTorch RPATH-pins these sonames ahead of `LD_LIBRARY_PATH`, so the agent
+overlays each library in place. The image must therefore **already contain
+PyTorch when smolvm pulls it**; installing torch later inside `machine run` is
+too late for auto-staging.
 
 ```bash
-docker build -t torch-cuda . && docker save torch-cuda -o torch-cuda.tar
-smolvm machine run --net --cuda --mem 16384 --image ./torch-cuda.tar -- \
+smolvm machine run --net --cuda --mem 16384 \
+  --image pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime -- \
   python3 -c "import torch; x=torch.randn(4,4,device='cuda',requires_grad=True); (x@x).sum().backward(); print('ok')"
 ```
 
@@ -422,24 +418,15 @@ Inside the VM the pinned sonames should be small shim bind-mounts (~600 KB), not
 the full NVIDIA libs (tens–hundreds of MB):
 
 ```bash
-find /usr/local/lib/python*/site-packages/nvidia -name 'libcublas.so.12' -exec ls -la {} \;
+ls -lh /opt/conda/lib/libcudart.so.12
 ```
 
-Layouts that are **not** auto-staged (fall back to `LD_PRELOAD` or a different
-image):
-
-| Layout | Why it fails |
-|--------|--------------|
-| conda `pytorch/pytorch` (`/opt/conda/lib/libcublas.so.*`) | outside the `site-packages/nvidia/` scan → real lib loads |
-| `pip install torch` at **runtime** inside `machine run` | wheels don't exist at pull time → nothing to stage |
-
-For conda images, preload the runtime shim as a stopgap:
-`-e LD_PRELOAD=/opt/smolvm-cuda/libcudart-shim.so`.
+For another vendored CUDA layout, set `SMOLVM_CUDA_STAGE_EXTRA_DIRS` to a
+colon-separated list of absolute guest directories that should be scanned.
 
 Recommended container env for training:
 `-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False`. See
-[`examples/cuda-pytorch/`](examples/cuda-pytorch/) for a complete worker image
-and run recipe.
+[`examples/cuda-pytorch/`](examples/cuda-pytorch/) for a complete run recipe.
 ## Secrets
 
 smolvm stores no secret material. A secret is a *reference* to a value that

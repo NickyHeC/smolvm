@@ -2,29 +2,33 @@
 
 Run unmodified PyTorch (Runtime API) inside a microVM by forwarding CUDA to the
 host NVIDIA GPU. The `smolvm-cudart-shim` + `smolvm-cuda-shim` libraries are
-auto-staged over the image's pip NVIDIA wheels — **no code changes, no manual
-`LD_LIBRARY_PATH`** — provided the image is built the right way.
+auto-staged over the official PyTorch image's NVIDIA libraries — **no code
+changes, local image build, or manual `LD_LIBRARY_PATH`**.
 
-## The one requirement: torch present at pull time
+> This example depends on [#602](https://github.com/smol-machines/smolvm/pull/602)
+> (conda library discovery) and
+> [#638](https://github.com/smol-machines/smolvm/pull/638) (the Runtime exports
+> required by conda PyTorch). Land all three together.
 
-Auto-staging (`crates/smolvm-agent/src/cuda.rs`) scans the image rootfs **when
-smolvm pulls it** and bind-mounts the guest shims over
-`.../site-packages/nvidia/*/lib/{libcudart,libcublas,libcublasLt,libcudnn}.so.*`.
-Those sonames are RPATH-pinned by PyTorch ahead of `LD_LIBRARY_PATH`, so
-overlaying them in place is the only way to interpose. The wheels must therefore
-exist in the image before the pull — not be `pip install`ed at runtime.
+## The requirement: torch present at pull time
 
-```bash
-docker build -t torch-cuda .
-docker save torch-cuda -o torch-cuda.tar
-```
+Auto-staging (`crates/smolvm-agent/src/cuda.rs`) scans the image rootfs when
+smolvm pulls it and bind-mounts the guest shims over the CUDA libraries that
+PyTorch resolves by RPATH. The supported layouts are pip NVIDIA wheels under
+`.../site-packages/nvidia/*/lib/` and, with #602, conda libraries under
+`/opt/conda/lib` and `/opt/conda/pkgs/*/lib`.
+
+The image must therefore already contain PyTorch before the pull. This example
+uses the upstream-maintained
+`pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime` image directly; smolvm remains
+the only local runtime required.
 
 ## Run
 
 ```bash
 smolvm machine run --net --cuda --mem 16384 \
   -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False \
-  --image ./torch-cuda.tar -- \
+  --image pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime -- \
   python3 -c "
 import torch
 print('cuda:', torch.cuda.is_available())
@@ -40,18 +44,19 @@ Inside the VM the pinned sonames should be small shim bind-mounts (~600 KB), not
 the full NVIDIA libraries (tens–hundreds of MB):
 
 ```bash
-smolvm machine run --net --cuda --image ./torch-cuda.tar -- \
-  find /usr/local/lib/python3.11/site-packages/nvidia -name 'libcublas.so.12' -exec ls -la {} \;
-# → ~600K  .../nvidia/cublas/lib/libcublas.so.12   (shim, good)
-# → ~109M  ...                                       (real lib, staging did not run)
+smolvm machine run --net --cuda \
+  --image pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime -- \
+  ls -lh /opt/conda/lib/libcudart.so.12
+# → small shim bind-mount: staging worked
+# → full NVIDIA library: staging did not run
 ```
 
 ## What does NOT work
 
 | Layout | Symptom | Fix |
 |--------|---------|-----|
-| conda `pytorch/pytorch` (`/opt/conda/lib/`) | `backward()` → `CUDA error` | build a pip-wheel image like this one, or `-e LD_PRELOAD=/opt/smolvm-cuda/libcudart-shim.so` |
-| `pip install torch` at runtime | CUDA init fails / real libs load | bake torch into the image (this Dockerfile) |
+| `pip install torch` at runtime | CUDA init fails / real libs load | use an image that already contains PyTorch |
+| libraries in another custom directory | real CUDA libraries load | add the guest path with `SMOLVM_CUDA_STAGE_EXTRA_DIRS` (#602) |
 
 ## Known limitation: attention backward
 

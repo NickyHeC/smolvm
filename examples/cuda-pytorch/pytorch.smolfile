@@ -1,12 +1,11 @@
 # PyTorch worker on smolvm with CUDA forwarding.
 #
-# Build the image first (torch must be present at pull time — see README.md):
-#   docker build -t torch-cuda examples/cuda-pytorch
-#   docker save torch-cuda -o torch-cuda.tar
-# Then point `image` at the tar (or a registry ref) and:
+# PyTorch and its CUDA libraries must be present at pull time so smolvm can
+# stage its forwarding shims. PRs #602 and #638 add support for this official
+# conda image layout; see README.md.
 #   smolvm machine run --cuda -s examples/cuda-pytorch/pytorch.smolfile -- python3 train.py
 
-image = "./torch-cuda.tar"
+image = "pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime"
 cuda = true
 net = true
 memory = 16384

@@ -26,9 +26,9 @@ smolvm machine exec --name browser -- \
     https://example.com
 smolvm machine exec --name browser -- base64 /tmp/out.png | base64 -d > out.png
 
-# PyTorch on a host NVIDIA GPU via CUDA forwarding (build torch-cuda.tar first,
-# see examples/cuda-pytorch/README.md)
-smolvm machine run --net --cuda --mem 16384 --image ./torch-cuda.tar -- \
+# PyTorch on a host NVIDIA GPU via CUDA forwarding
+smolvm machine run --net --cuda --mem 16384 \
+  --image pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime -- \
   python3 -c "import torch; print(torch.cuda.is_available())"
 ```
 
