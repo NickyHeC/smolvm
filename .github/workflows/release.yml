@@ -283,7 +283,9 @@ jobs:
           # so non-GPU Linux hosts can dlopen it (GPU stays optional at runtime).
           # Without patchelf the strip is silently skipped and `smolvm run` fails
           # with "libvirglrenderer.so.1: cannot open shared object file".
-          sudo apt-get install -y build-essential libssl-dev pkg-config e2fsprogs patchelf
+          sudo apt-get install -y build-essential libssl-dev pkg-config e2fsprogs patchelf \
+            meson ninja-build libdrm-dev libepoxy-dev libegl1-mesa-dev libgbm-dev \
+            libvulkan-dev python3-yaml
 
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
@@ -294,6 +296,12 @@ jobs:
           echo "Library directory: ${{ matrix.lib_dir }}"
           ls -la ${{ matrix.lib_dir }}/
           file ${{ matrix.lib_dir }}/*
+
+      - name: Build bundled virglrenderer (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          ./scripts/build-virglrenderer-linux.sh "${{ matrix.lib_dir }}"
+          ./scripts/check-virglrenderer-bundle.sh "${{ matrix.lib_dir }}"
 
       - name: Download rootfs
         uses: actions/download-artifact@v8
@@ -408,6 +416,15 @@ jobs:
               echo "OK: $name ($dst_size bytes)"
             fi
           done
+          if [[ "${{ matrix.platform }}" == linux-* ]]; then
+            for gpu_file in libvirglrenderer.so.1 libepoxy.so.0 virgl_render_server; do
+              if [[ ! -e "$DIST_LIB/$gpu_file" ]]; then
+                echo "ERROR: Linux distribution is missing $gpu_file"
+                exit 1
+              fi
+              echo "OK: bundled $gpu_file"
+            done
+          fi
 
       - name: List distribution contents
         run: |

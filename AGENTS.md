@@ -323,9 +323,9 @@ Not available on Windows (WHP) — `--gpu` has no effect there.
 
 **Host setup:**
 - macOS — bundled, no extra installs needed.
-- Linux — install virglrenderer from the system package manager before use:
-  - Alpine: `apk add virglrenderer mesa-vulkan-intel` (or `mesa-vulkan-ati` for AMD)
-  - Debian/Ubuntu: `apt install virglrenderer0 mesa-vulkan-drivers`
+- Linux release archives bundle virglrenderer 1.2.0 with Vulkan ICD preloading disabled (required for NVIDIA). The host still provides its hardware-specific Vulkan driver stack:
+  - Alpine: `apk add mesa-vulkan-intel` (or `mesa-vulkan-ati` for AMD)
+  - Debian/Ubuntu: `apt install mesa-vulkan-drivers` for Intel/AMD; install the NVIDIA driver for NVIDIA GPUs.
 
 ```bash
 # One-shot GPU workload

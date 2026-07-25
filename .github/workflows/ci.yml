@@ -56,6 +56,30 @@ jobs:
       - name: Bundled libkrun keeps a glibc floor <= 2.35
         run: ./scripts/check-libkrun-glibc-floor.sh
 
+  virglrenderer-bundle:
+    name: virglrenderer bundle (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install virglrenderer build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential meson ninja-build pkg-config \
+            libdrm-dev libepoxy-dev libegl1-mesa-dev libgbm-dev libvulkan-dev \
+            python3-yaml binutils file
+      - name: Build and validate virglrenderer 1.2.0
+        run: |
+          ./scripts/build-virglrenderer-linux.sh "/tmp/virglrenderer-${{ matrix.arch }}"
+          ./scripts/check-virglrenderer-bundle.sh "/tmp/virglrenderer-${{ matrix.arch }}"
+
   audit:
     name: Cargo Audit
     runs-on: ubuntu-latest

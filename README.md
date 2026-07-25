@@ -182,7 +182,7 @@ Known Limitations
 * Volume mounts: directories only (no single files). Mounting at `/workspace` (`-v /host/dir:/workspace`) takes priority over the default storage-disk workspace — your host directory is used instead.
 * macOS: binary must be signed with Hypervisor.framework entitlements.
 * `--ssh-agent` requires an SSH agent running on the host (`SSH_AUTH_SOCK` must be set).
-* GPU acceleration requires libkrun built with `GPU=1` and virglrenderer + a Vulkan driver on the host (see [GPU Acceleration](#gpu-acceleration) below).
+* GPU acceleration requires libkrun built with `GPU=1` and a working Vulkan driver on the host (see [GPU Acceleration](#gpu-acceleration) below).
 * Windows: `--net` works the same as on other platforms (virtio-net with inbound port-forwarding; TSI for outbound-only VMs), as do `machine exec` / interactive sessions and `machine stats`. Not yet available on Windows: GPU acceleration and `machine fork` / snapshot. Pack *create* needs `storage-template.ext4` / `overlay-template.ext4` next to `smolvm.exe` (Windows has no host `mkfs.ext4`).
 
 GPU Acceleration
@@ -198,14 +198,14 @@ ANGLE (Intel, Vulkan 1.4 (Virtio-GPU Venus (Intel(R) UHD Graphics ...)), venus)
 
 **macOS** — virglrenderer and MoltenVK are bundled in the smolvm distribution. No extra installs needed.
 
-**Linux** — virglrenderer and a host Vulkan driver must be installed from the system package manager:
+**Linux** — release archives bundle virglrenderer 1.2.0 with Vulkan ICD preloading disabled, which is required for NVIDIA's proprietary driver. The hardware-specific Vulkan driver stack remains a host dependency:
 
 | Distro | Packages |
 |--------|----------|
-| Alpine | `apk add virglrenderer mesa-vulkan-intel` (or `mesa-vulkan-ati` for AMD) |
-| Debian/Ubuntu | `apt install virglrenderer0 mesa-vulkan-drivers` |
+| Alpine | `apk add mesa-vulkan-intel` (or `mesa-vulkan-ati` for AMD) |
+| Debian/Ubuntu | `apt install mesa-vulkan-drivers` (Intel/AMD); install the NVIDIA driver for NVIDIA GPUs |
 
-> virglrenderer depends on libEGL and libdrm from the host GPU driver stack — these are hardware-specific and cannot be bundled. Any GPU-capable Linux host will already have them installed via its GPU driver.
+> The host must still provide its Vulkan ICD and the matching `libEGL`, `libdrm`, and `libgbm` stack. These are hardware-specific and are normally installed with the GPU driver.
 
 ### Usage
 
