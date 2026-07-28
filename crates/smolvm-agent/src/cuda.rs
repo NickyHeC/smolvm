@@ -129,6 +129,10 @@ const CONTAINER_SHIM_DIR: &str = "/opt/smolvm-cuda";
 const RUNTIME_SHIM: &str = "libcudart-shim.so";
 /// The driver shim (`libcuda.so.1`) inside [`GUEST_SHIM_DIR`].
 const DRIVER_SHIM: &str = "libcuda.so.1";
+/// Written by `build-agent-rootfs.sh` only after verifying that the runtime
+/// shim exports the conda-PyTorch surface needed for full-soname overmounts.
+const RUNTIME_CAPABILITIES: &str = "runtime-capabilities";
+const CONDA_OVERMOUNT_CAPABILITY: &str = "conda-overmount-v1";
 
 /// The pip-bundled NVIDIA sonames PyTorch's `libtorch_cuda.so` resolves via
 /// DT_RPATH. RPATH is searched *before* `LD_LIBRARY_PATH`, so the only way to
@@ -193,16 +197,39 @@ fn stage_shims(
     spec.add_bind_mount(&shim_dir.to_string_lossy(), CONTAINER_SHIM_DIR, true);
     append_ld_library_path(&mut spec.process.env, CONTAINER_SHIM_DIR);
 
-    // Runtime shim over each RPATH-pinned NVIDIA library found in the image
-    // (pip-wheel and conda layouts, plus SMOLVM_CUDA_STAGE_EXTRA_DIRS).
+    // Runtime shim over each RPATH-pinned NVIDIA library found in the image.
+    // Pip-wheel staging predates the conda path and remains unconditional.
+    // Conda/extra-dir overmounts replace the real cudart fallback completely,
+    // so use them only when packaging verified the required Runtime exports.
+    let supports_extended_overmount = runtime_supports_conda_overmount(shim_dir);
     let runtime_src = runtime.to_string_lossy();
+    let mut skipped_extended = false;
     for hit in find_rpath_pinned_libs(rootfs) {
+        if !is_pip_layout(&hit.to_string_lossy()) && !supports_extended_overmount {
+            skipped_extended = true;
+            continue;
+        }
         let dest = format!(
             "/{}",
             hit.strip_prefix(rootfs).unwrap_or(&hit).to_string_lossy()
         );
         spec.add_bind_mount(&runtime_src, &dest, true);
     }
+    if skipped_extended {
+        tracing::warn!(
+            "CUDA runtime shim lacks {CONDA_OVERMOUNT_CAPABILITY}; leaving conda/extra-dir \
+             libraries untouched to preserve the LD_PRELOAD fallback"
+        );
+    }
+}
+
+fn runtime_supports_conda_overmount(shim_dir: &std::path::Path) -> bool {
+    std::fs::read_to_string(shim_dir.join(RUNTIME_CAPABILITIES))
+        .map(|caps| {
+            caps.lines()
+                .any(|cap| cap.trim() == CONDA_OVERMOUNT_CAPABILITY)
+        })
+        .unwrap_or(false)
 }
 
 /// Append `dir` to the spec's `LD_LIBRARY_PATH`, preserving an image-provided
@@ -230,11 +257,13 @@ const STAGE_EXTRA_DIRS_ENV: &str = "SMOLVM_CUDA_STAGE_EXTRA_DIRS";
 /// layouts: pip wheels (`.../site-packages/nvidia/<lib>/lib/<soname>`) and conda
 /// (`/opt/conda/lib/<soname>`, `/opt/conda/pkgs/*/lib/<soname>`). RPATH pins the
 /// soname ahead of `LD_LIBRARY_PATH` in both, so a bind mount is the only way in.
+fn is_pip_layout(path: &str) -> bool {
+    path.contains("/nvidia/")
+        && (path.contains("/site-packages/") || path.contains("/dist-packages/"))
+}
+
 fn is_staged_layout(path: &str) -> bool {
-    let pip = path.contains("/nvidia/")
-        && (path.contains("/site-packages/") || path.contains("/dist-packages/"));
-    let conda = path.contains("/conda/");
-    pip || conda
+    is_pip_layout(path) || path.contains("/conda/")
 }
 
 /// Resolve a matched entry to the real file to overlay. Regular files map to
@@ -579,5 +608,68 @@ mod tests {
         assert!(hits[0].ends_with("usr/local/cuda/lib64/libcudart.so.12"));
 
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    fn conda_runtime_fixture(tmp: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let rootfs = tmp.join("rootfs");
+        let lib = rootfs.join("opt/conda/lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(lib.join("libcudart.so.12.4.127"), b"real-cudart").unwrap();
+        std::os::unix::fs::symlink("libcudart.so.12.4.127", lib.join("libcudart.so.12")).unwrap();
+
+        let shim_dir = tmp.join("shims");
+        std::fs::create_dir_all(&shim_dir).unwrap();
+        std::fs::write(shim_dir.join(RUNTIME_SHIM), b"shim").unwrap();
+        std::fs::write(shim_dir.join(DRIVER_SHIM), b"shim").unwrap();
+        (rootfs, shim_dir)
+    }
+
+    #[test]
+    fn incomplete_runtime_preserves_conda_ld_preload_fallback() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (rootfs, shim_dir) = conda_runtime_fixture(tmp.path());
+        let mut s = spec();
+        s.add_env("LD_PRELOAD", "/opt/smolvm-cuda/libcudart-shim.so");
+
+        // No capability stamp models #602 without #638: keep the real cudart
+        // visible so the preload shim can fall through for missing exports.
+        stage_shims(&mut s, &rootfs, &shim_dir);
+
+        assert!(s
+            .process
+            .env
+            .iter()
+            .any(|e| e == "LD_PRELOAD=/opt/smolvm-cuda/libcudart-shim.so"));
+        assert!(!s
+            .mounts
+            .iter()
+            .any(|m| m.destination.contains("/opt/conda/lib/libcudart")));
+    }
+
+    #[test]
+    fn capable_runtime_stages_conda_without_ld_preload() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (rootfs, shim_dir) = conda_runtime_fixture(tmp.path());
+        std::fs::write(
+            shim_dir.join(RUNTIME_CAPABILITIES),
+            format!("{CONDA_OVERMOUNT_CAPABILITY}\n"),
+        )
+        .unwrap();
+        let mut s = spec();
+
+        // Models a packaged #602+#638 shim: the build verified its exports and
+        // stamped the capability, so the conda soname can be replaced directly.
+        stage_shims(&mut s, &rootfs, &shim_dir);
+
+        assert!(s.mounts.iter().any(|m| m
+            .destination
+            .ends_with("/opt/conda/lib/libcudart.so.12.4.127")
+            && m.source.ends_with(RUNTIME_SHIM)));
+        assert!(!s.process.env.iter().any(|e| e.starts_with("LD_PRELOAD=")));
+        assert!(s
+            .process
+            .env
+            .iter()
+            .any(|e| e.starts_with("LD_LIBRARY_PATH=") && e.contains(CONTAINER_SHIM_DIR)));
     }
 }
