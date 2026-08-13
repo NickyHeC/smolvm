@@ -3124,8 +3124,14 @@ pub extern "C" fn cuEventSynchronize(event: *mut c_void) -> c_int {
 }
 
 #[no_mangle]
-pub extern "C" fn cuEventQuery(_event: *mut c_void) -> c_int {
-    CUDA_SUCCESS
+pub extern "C" fn cuEventQuery(event: *mut c_void) -> c_int {
+    // Honest completion status (0 or 600-NotReady), same as cuStreamQuery above:
+    // a caller polling an event to decide when a buffer is safe to reuse must not
+    // be told "complete" while the work is still in flight on a side stream.
+    match with_state(|s| s.client.event_query(event as u64)) {
+        Ok(code) => code,
+        Err(e) => e,
+    }
 }
 
 #[no_mangle]
