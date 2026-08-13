@@ -32,6 +32,19 @@ jobs:
       - name: Check secrets guardrails
         run: ./scripts/check-secrets-guards.sh
 
+  shell-tests:
+    name: Shell tests (VM-less)
+    runs-on: ubuntu-latest
+    # Only the three suites that declare they need no smolvm binary, VM, KVM or
+    # network. Everything else under tests/ drives real machines and stays out of
+    # CI for the reasons the macOS and Linux jobs already document. These need no
+    # build and no LFS, so they get their own job rather than slowing a job that
+    # does: nothing here waits on a toolchain, and a failure names itself.
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run the shell suites that need no VM
+        run: ./tests/run_tests.sh rootfs-modes harness wrapper
+
   libkrun-provenance:
     name: libkrun freshness
     runs-on: ubuntu-latest

@@ -32,6 +32,12 @@
 #   pack-quick      test_pack.sh --quick
 #   gpu             test_gpu.sh  (requires GPU hardware)
 #
+# VM-less suites (opt-in only; no smolvm binary, VM, KVM or network needed, so
+# unlike every group above these are safe to run anywhere, including in CI):
+#   rootfs-modes    test_agent_rootfs_modes.sh
+#   harness         test_harness.sh
+#   wrapper         test_wrapper.sh
+#
 # Non-pass/fail:
 #   bench           bench_vm_startup.sh (prints timing, always exits 0)
 #
@@ -72,6 +78,9 @@ get_suite() {
         pack-quick)  echo "$SCRIPT_DIR/test_pack.sh --quick" ;;
         gpu)         echo "$SCRIPT_DIR/test_gpu.sh" ;;
         scale)       echo "$SCRIPT_DIR/test_scale.sh" ;;
+        rootfs-modes) echo "$SCRIPT_DIR/test_agent_rootfs_modes.sh" ;;
+        harness)     echo "$SCRIPT_DIR/test_harness.sh" ;;
+        wrapper)     echo "$SCRIPT_DIR/test_wrapper.sh" ;;
         *)           return 1 ;;
     esac
 }
@@ -156,6 +165,7 @@ else
             echo "Unknown group: $group"
             echo "Feature suites: bare db network volumes ports storage resources reliability run image local-image fork-base packed"
             echo "Extended suites: cli api virtio-net smolfile pack pack-quick gpu scale"
+            echo "VM-less suites: rootfs-modes harness wrapper"
             echo "Other: bench"
             exit 1
         }
