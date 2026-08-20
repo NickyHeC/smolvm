@@ -506,23 +506,43 @@ pub fn repair_boot_volume_mounts() -> Result<()> {
     Ok(())
 }
 
+/// True when a user mount target claims /workspace itself or anything beneath it.
+///
+/// Compares path *components*, not string prefixes: `/workspaces/project` begins
+/// with the characters of `/workspace` but is a sibling rather than a child, and
+/// must not suppress the fallback. Slash-normalized so a trailing `/` on the
+/// user's target still matches.
+fn claims_workspace(target: &str) -> bool {
+    Path::new(target.trim_end_matches('/')).starts_with(paths::WORKSPACE_GUEST_PATH)
+}
+
 /// Add the /storage/workspace → /workspace fallback bind mount to an OCI spec,
-/// unless a user-provided volume already claims /workspace.
+/// unless a user-provided volume already claims /workspace or a path under it.
 ///
 /// The fallback exposes the storage disk's workspace directory inside containers
 /// so that persistent files written to /workspace survive across VM restarts.
-/// It must be skipped when the user provides `-v host:/workspace` to avoid
-/// silently overwriting their virtiofs mount (which comes earlier in the spec).
-///
-/// Mount target comparison is slash-normalized to handle trailing slashes.
+/// It must be skipped whenever the user has mounted at or below /workspace, to
+/// avoid silently overwriting their virtiofs mount (which comes earlier in the
+/// spec). Binding /workspace on top of a user mount at, say, /workspace/project
+/// replaces the parent directory the nested mount hangs from: the mount stays in
+/// the namespace and is listed in /proc/self/mountinfo, but no longer resolves by
+/// path, so the user sees an empty directory instead of their files.
 pub fn add_workspace_fallback(spec: &mut OciSpec, mounts: &[(String, String, bool)]) {
     let workspace_src = Path::new(STORAGE_ROOT).join(WORKSPACE_DIR);
     if !workspace_src.exists() {
         return;
     }
-    let user_owns_workspace = mounts
-        .iter()
-        .any(|(_, path, _)| path.trim_end_matches('/') == paths::WORKSPACE_GUEST_PATH);
+    add_workspace_fallback_from(spec, mounts, &workspace_src);
+}
+
+/// Core of [`add_workspace_fallback`], with the fallback source injected so the
+/// rule can be exercised without a real /storage/workspace on the test host.
+fn add_workspace_fallback_from(
+    spec: &mut OciSpec,
+    mounts: &[(String, String, bool)],
+    workspace_src: &Path,
+) {
+    let user_owns_workspace = mounts.iter().any(|(_, path, _)| claims_workspace(path));
     if !user_owns_workspace {
         spec.add_bind_mount(
             &workspace_src.to_string_lossy(),
@@ -4521,6 +4541,83 @@ mod tests {
     // through its public API (the crate also unit-tests them independently).
     use smolvm_oci_layer::{classify_layer_entry, jailed_join, LayerEntry};
     use std::sync::{Mutex, OnceLock};
+
+    /// The /workspace fallback is bound on top of the user's mounts, so it must
+    /// stand down for anything at or below /workspace — not only an exact
+    /// `-v host:/workspace`. A user mount at /workspace/project that keeps the
+    /// fallback ends up shadowed by its own parent: still listed in
+    /// /proc/self/mountinfo, but unreachable by path.
+    ///
+    /// The sibling /workspaces/project is the trap: it shares the string prefix
+    /// but is not under /workspace, and must still get the fallback.
+    #[test]
+    fn a_user_mount_below_workspace_suppresses_the_fallback() {
+        let fallback_src = std::path::Path::new("/storage/workspace");
+        let user_source = "/host/source".to_string();
+
+        // (user mount target, mount destinations expected in the spec afterwards)
+        let cases: &[(&str, &[&str])] = &[
+            // At /workspace: fallback suppressed, only the user's mount.
+            ("/workspace", &["/workspace"]),
+            // Below /workspace: fallback suppressed — the bug this guards.
+            ("/workspace/project", &["/workspace/project"]),
+            // Trailing slash is the same claim.
+            ("/workspace/project/", &["/workspace/project/"]),
+            // Sibling that merely shares the prefix: fallback still applies.
+            (
+                "/workspaces/project",
+                &["/workspaces/project", "/workspace"],
+            ),
+            // Unrelated targets: fallback still applies.
+            ("/mnt/project", &["/mnt/project", "/workspace"]),
+            (
+                "/opt/workspace/project",
+                &["/opt/workspace/project", "/workspace"],
+            ),
+        ];
+
+        for (target, expected) in cases {
+            let mut spec = OciSpec::new(
+                &[],
+                &[],
+                "/",
+                false,
+                &crate::oci::ProcessIdentity::root(),
+                false,
+            );
+            spec.mounts.clear();
+            let mounts = vec![(user_source.clone(), (*target).to_string(), false)];
+            for (source, destination, read_only) in &mounts {
+                spec.add_bind_mount(source, destination, *read_only);
+            }
+
+            add_workspace_fallback_from(&mut spec, &mounts, fallback_src);
+
+            let got: Vec<&str> = spec.mounts.iter().map(|m| m.destination.as_str()).collect();
+            assert_eq!(
+                got, *expected,
+                "user mount at {target} produced the wrong mount set"
+            );
+        }
+    }
+
+    /// With no user mount in play the fallback must still be added, otherwise
+    /// /workspace stops surviving VM restarts.
+    #[test]
+    fn no_user_mount_still_gets_the_workspace_fallback() {
+        let mut spec = OciSpec::new(
+            &[],
+            &[],
+            "/",
+            false,
+            &crate::oci::ProcessIdentity::root(),
+            false,
+        );
+        spec.mounts.clear();
+        add_workspace_fallback_from(&mut spec, &[], std::path::Path::new("/storage/workspace"));
+        let got: Vec<&str> = spec.mounts.iter().map(|m| m.destination.as_str()).collect();
+        assert_eq!(got, vec!["/workspace"]);
+    }
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
