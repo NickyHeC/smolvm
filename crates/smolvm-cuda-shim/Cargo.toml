@@ -5,6 +5,9 @@ edition = "2021"
 description = "Guest-side libcuda.so.1 drop-in: CUDA Driver API over smolvm's vsock RPC"
 license = "Apache-2.0"
 
+[lints]
+workspace = true
+
 [lib]
 name = "cuda"
 crate-type = ["cdylib"]

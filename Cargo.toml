@@ -135,6 +135,16 @@ wiremock = "0.6"
 [build-dependencies]
 pkg-config = "0.3"
 
+# clippy 1.98 added `chunks_exact_to_as_chunks`, which fires under `-D warnings`
+# on ~19 pre-existing `chunks_exact(N)` sites across six crates and turned CI red
+# repo-wide. Allowed here so the lint does not gate unrelated work; converting the
+# call sites to `as_chunks::<N>()` is worth doing deliberately, not in a sweep
+# (one of them is the ICMP checksum, which also uses `.remainder()`).
+[workspace.lints.clippy]
+chunks_exact_to_as_chunks = "allow"
+# `for tick in 0..` in the CUDA probe binary is a deliberate polling loop.
+for_unbounded_range = "allow"
+
 [workspace.dependencies]
 base64 = "0.22"
 serde = { version = "1", features = ["derive"] }

@@ -5,6 +5,9 @@ edition = "2021"
 description = "CUDA Driver-API remoting over vsock for smolvm guests"
 license = "Apache-2.0"
 
+[lints]
+workspace = true
+
 [features]
 # host: server-side dispatch + CPU emulation backend (std only).
 # gpu:  real driver backend via libloading (implies host).

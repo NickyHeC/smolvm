@@ -5,6 +5,9 @@ edition = "2021"
 description = "Guest-side CUDA-over-vsock runner for smolvm microVMs (Linux)"
 license = "Apache-2.0"
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "smolvm-cuda-run"
 path = "src/main.rs"

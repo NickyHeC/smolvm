@@ -6,6 +6,9 @@ description = "Host-side virtio-net runtime for smolvm"
 license = "Apache-2.0"
 repository = "https://github.com/smol-machines/smolvm"
 
+[lints]
+workspace = true
+
 [dependencies]
 crossbeam-queue = "0.3"
 humantime = "2"
