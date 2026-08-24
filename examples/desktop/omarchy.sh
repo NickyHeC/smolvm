@@ -34,6 +34,11 @@ printf '%%wheel ALL=(ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/wheel && chmod 440 /
 RT=/run/user/1000; mkdir -p "$RT"; chown omar:omar "$RT"; chmod 700 "$RT"
 chmod 666 /dev/dri/* 2>/dev/null
 
+# Chromium passes fonts and tiles between processes through POSIX shared
+# memory; at the 64M container-default /dev/shm its font service hits ENOSPC
+# and CHECK-crashes the renderer whenever a video plays.
+mount -o remount,size=2G /dev/shm 2>/dev/null || true
+
 # D-Bus refuses to start without a machine id, and the session components
 # need a session bus — a container guest has neither out of the box.
 dbus-uuidgen --ensure 2>/dev/null || true
@@ -110,7 +115,11 @@ timeout 10 hyprctl keyword cursor:no_hardware_cursors true >/dev/null 2>&1
 # a container guest does not run. Spawn it directly. (Under the lua config
 # `hyprctl dispatch exec` parses its argument as lua — spawn clients as plain
 # processes instead.)
-export $(dbus-launch 2>/dev/null)
+# dbus-launch plain output single-quotes the address; export $(...) keeps
+# the quotes in the variable and every D-Bus client then fails to parse
+# it. --sh-syntax emits eval-able assignments instead.
+eval "$(dbus-launch --sh-syntax 2>/dev/null)"
+export DBUS_SESSION_BUS_ADDRESS DBUS_SESSION_BUS_PID
 export OMARCHY_PATH=$HOME/.local/share/omarchy
 (setsid env DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS \
   QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 \
