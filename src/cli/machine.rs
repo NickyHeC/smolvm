@@ -2640,9 +2640,10 @@ fn persistent_overlay_owner_for_record(
     machine_name: &str,
     record: Option<&smolvm::config::VmRecord>,
 ) -> String {
-    smolvm::workload::persistent_overlay_owner(
+    smolvm::workload::persistent_overlay_owner_with_lineage(
         machine_name,
         record.and_then(|record| record.golden.as_deref()),
+        record.and_then(|record| record.fork_overlay_owner.as_deref()),
     )
 }
 
@@ -3709,7 +3710,7 @@ impl StartCmd {
 #[derive(Args, Debug)]
 pub struct ForkCmd {
     /// The running, forkable source machine to clone from.
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, visible_alias = "from", value_name = "NAME")]
     pub golden: String,
 
     /// Name for the new clone machine.
@@ -3755,7 +3756,7 @@ pub struct ForkCmd {
 
     /// Make the clone itself forkable (memfd RAM + control socket), so it can
     /// in turn be forked.
-    #[arg(long)]
+    #[arg(long, visible_alias = "checkpointable")]
     pub forkable: bool,
 
     /// Pin the clone's inbound port forwards (repeatable). Without this, the
