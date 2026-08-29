@@ -289,4 +289,15 @@ Development
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
+Documentation
+-------------
+
+The user documentation at [smolmachines.com/docs](https://smolmachines.com/docs/) is written in
+[smol-machines/docs](https://github.com/smol-machines/docs), and corrections and new pages are
+welcome there. It is Markdown only, with no build to run; its
+[CONTRIBUTING.md](https://github.com/smol-machines/docs/blob/main/CONTRIBUTING.md) covers the
+page format and how a change reaches the site.
+
+Bugs and feature requests for the runtime stay here.
+
 [Apache-2.0](LICENSE) · made by [@binsquare](https://github.com/BinSquare) · [twitter](https://x.com/binsquares) · [github](https://github.com/smol-machines/smolvm)
