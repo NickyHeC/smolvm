@@ -455,7 +455,7 @@ install_smolvm() {
     # Linux) and needs `truncate` (GNU coreutils); skipped otherwise, in which
     # case the runtime safely falls back to the copy path. The sizes mirror
     # DEFAULT_STORAGE_SIZE_GIB (20) and DEFAULT_OVERLAY_SIZE_GIB (10).
-    if command -v truncate >/dev/null 2>&1; then
+    if [[ "$(uname -s)" == "Linux" ]] && command -v truncate >/dev/null 2>&1; then
         [[ -f "$prefix/storage-template.ext4" ]] && truncate -s 20G "$prefix/storage-template.ext4"
         [[ -f "$prefix/overlay-template.ext4" ]] && truncate -s 10G "$prefix/overlay-template.ext4"
     fi

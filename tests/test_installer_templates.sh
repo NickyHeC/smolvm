@@ -159,6 +159,29 @@ test_missing_templates_are_reported() {
     return $rc
 }
 
+test_template_sizing_is_linux_only() {
+    local tmp prefix
+    tmp=$(mktemp -d); prefix="$tmp/home/.smolvm"; mkdir -p "$prefix"
+    make_dist_tarball "$tmp" plain
+
+    run_installer "$tmp" "$prefix" >/dev/null 2>&1
+
+    local rc=0 size
+    size=$(wc -c < "$prefix/storage-template.ext4" | tr -d ' ')
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        # The instant qcow2 overlay only engages when the template already
+        # presents the full default virtual size.
+        [[ "$size" -eq $((20 * 1024 * 1024 * 1024)) ]] || rc=1
+    else
+        # The overlay path is Linux-only, so sizing here buys nothing; the
+        # guard used to test only for truncate, which macOS also ships.
+        [[ "$size" -eq 4096 ]] || rc=1
+    fi
+
+    rm -rf "$tmp"
+    return $rc
+}
+
 if ! command -v zstd >/dev/null 2>&1; then
     log_skip "installer template tests (zstd not available to build the fixture)"
     print_summary
@@ -169,5 +192,6 @@ run_test "compressed templates are installed" test_compressed_templates_are_inst
 run_test "uncompressed templates are installed" test_uncompressed_templates_are_installed
 run_test "upgrade replaces templates instead of only deleting" test_upgrade_replaces_templates_instead_of_only_deleting
 run_test "missing templates are reported" test_missing_templates_are_reported
+run_test "template sizing is linux only" test_template_sizing_is_linux_only
 
 print_summary
