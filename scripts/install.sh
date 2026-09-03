@@ -395,8 +395,14 @@ install_smolvm() {
     if [[ -f "$prefix/storage-template.ext4" ]]; then
         rm -f "$prefix/storage-template.ext4"
     fi
+    if [[ -f "$prefix/storage-template.ext4.zst" ]]; then
+        rm -f "$prefix/storage-template.ext4.zst"
+    fi
     if [[ -f "$prefix/overlay-template.ext4" ]]; then
         rm -f "$prefix/overlay-template.ext4"
+    fi
+    if [[ -f "$prefix/overlay-template.ext4.zst" ]]; then
+        rm -f "$prefix/overlay-template.ext4.zst"
     fi
 
     # Copy files
@@ -417,12 +423,28 @@ install_smolvm() {
         has_smol=true
     fi
 
-    # Copy disk templates if present
-    if [[ -f "$extracted_dir/storage-template.ext4" ]]; then
+    # Copy disk templates if present. Releases ship them zstd-compressed, and
+    # the runtime expands a `.zst` next to itself on first use, so either form
+    # is usable; prefer the compressed one the tarball actually carries.
+    local templates_installed=0
+    if [[ -f "$extracted_dir/storage-template.ext4.zst" ]]; then
+        cp "$extracted_dir/storage-template.ext4.zst" "$prefix/"
+        templates_installed=$((templates_installed + 1))
+    elif [[ -f "$extracted_dir/storage-template.ext4" ]]; then
         cp "$extracted_dir/storage-template.ext4" "$prefix/"
+        templates_installed=$((templates_installed + 1))
     fi
-    if [[ -f "$extracted_dir/overlay-template.ext4" ]]; then
+    if [[ -f "$extracted_dir/overlay-template.ext4.zst" ]]; then
+        cp "$extracted_dir/overlay-template.ext4.zst" "$prefix/"
+        templates_installed=$((templates_installed + 1))
+    elif [[ -f "$extracted_dir/overlay-template.ext4" ]]; then
         cp "$extracted_dir/overlay-template.ext4" "$prefix/"
+        templates_installed=$((templates_installed + 1))
+    fi
+    # The copy is conditional on names the distribution may stop using, so
+    # report a miss rather than installing nothing silently.
+    if [[ "$templates_installed" -lt 2 ]]; then
+        warn "distribution has no disk templates; VM disks will be formatted with mkfs.ext4 at boot"
     fi
 
     # Size the disk templates to their default virtual size at install time, so

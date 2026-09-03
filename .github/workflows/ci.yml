@@ -32,6 +32,14 @@ jobs:
       - name: Check secrets guardrails
         run: ./scripts/check-secrets-guards.sh
 
+  installer:
+    name: Installer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check disk templates are installed
+        run: ./tests/test_installer_templates.sh
+
   libkrun-provenance:
     name: libkrun freshness
     runs-on: ubuntu-latest
