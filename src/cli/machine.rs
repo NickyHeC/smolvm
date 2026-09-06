@@ -684,6 +684,11 @@ pub struct RunCmd {
     )]
     pub secret_file: Vec<String>,
 
+    /// Run command before the workload (can be used multiple times); the same
+    /// as `init` in a Smolfile, and the CLI form wins when both are given
+    #[arg(long = "init", value_name = "COMMAND")]
+    pub init: Vec<String>,
+
     /// Skip the init-layer cache: re-run `init` on every ephemeral run instead of
     /// baking `image + init` once into a cached, reusable artifact. Use this when
     /// `init` depends on live volume contents (and so cannot be safely cached).
@@ -916,15 +921,6 @@ fn ensure_init_layer(
         return Ok(cached);
     }
 
-    // The Smolfile is the source of init commands, so it's required only when there
-    // ARE init steps. A bare `--oci-cache` image (no init) bakes from `--image`
-    // alone and needs no Smolfile.
-    if !params.init.is_empty() && smolfile.is_none() {
-        return Err(smolvm::Error::config(
-            "init-layer cache",
-            "init caching requires a --smolfile (the init source); pass --no-init-cache otherwise",
-        ));
-    }
     if params.init.is_empty() {
         println!("Caching image {key} (one-time; reused on later runs)");
     } else {
@@ -981,6 +977,23 @@ fn ensure_init_layer(
             create.push("-e".into());
             create.push(e.clone());
         }
+        // Forward the RESOLVED init steps too: they may have come from `--init`
+        // rather than the Smolfile, and the cache key is derived from them, so
+        // the baked rootfs must run exactly these.
+        for step in &params.init {
+            create.push("--init".into());
+            create.push(step.clone());
+        }
+        // Init runs in the resolved workdir as the resolved user; without these
+        // a step like `echo x > $WORKDIR/f` has no directory to write into.
+        if let Some(workdir) = &params.workdir {
+            create.push("--workdir".into());
+            create.push(workdir.clone());
+        }
+        if let Some(user) = &params.user {
+            create.push("--user".into());
+            create.push(user.clone());
+        }
         if params.allow_system_mounts {
             create.push("--allow-system-mounts".into());
         }
@@ -1018,7 +1031,19 @@ fn ensure_init_layer(
         println!("  · snapshotting...");
         run_smolvm(
             &exe,
-            &["pack", "create", "--from-vm", &tmp, "-o", &staged_out],
+            // `--include-workspace`: init may well have written into the workdir,
+            // which is the storage disk rather than the rootfs the snapshot
+            // captures; without it every cached run would start without those
+            // files and nothing would say why.
+            &[
+                "pack",
+                "create",
+                "--from-vm",
+                &tmp,
+                "--include-workspace",
+                "-o",
+                &staged_out,
+            ],
         )?;
         if !staged_sidecar.exists() {
             return Err(smolvm::Error::config(
@@ -1194,7 +1219,7 @@ impl RunCmd {
             self.net_backend,
             self.dns,
             self.network_name.clone(),
-            vec![],
+            self.init.clone(),
             self.env,
             self.workdir,
             self.user,
