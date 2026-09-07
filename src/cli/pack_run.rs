@@ -665,8 +665,9 @@ impl PackRunCmd {
             cmd.args(["_boot-vm", &config_path.to_string_lossy()])
                 // The boot subprocess loads libkrun/libkrunfw from here.
                 .env("SMOLVM_LIB_DIR", &lib_dir)
-                // The CLI detaches the VM; don't arm the parent-death watchdog.
-                .env("SMOLVM_BOOT_WATCH_PARENT", "0")
+                // Test build: arm the parent-death watchdog so a foreground
+                // pack-run VM dies with the CLI (see hypothesis B).
+                .env("SMOLVM_BOOT_WATCH_PARENT", "1")
                 // Per-VM readiness marker name so the agent writes its own marker.
                 .env(
                     smolvm_protocol::guest_env::READY_MARKER,
