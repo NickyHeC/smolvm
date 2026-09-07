@@ -28,6 +28,17 @@ pub(crate) fn rootfs_dax_window() -> u64 {
     }
 }
 
+/// DAX window for the pre-extracted packed-layers share. Gated like every
+/// other window: the arm64 guest kernel has no FUSE_DAX, so a nonzero window
+/// there is a shared-memory region the guest can never mount.
+pub(crate) fn packed_layers_dax_window() -> u64 {
+    if VIRTIOFS_DAX_SUPPORTED {
+        DATA_DAX_WINDOW
+    } else {
+        0
+    }
+}
+
 /// DAX window for one user mount. Normal mounts are explicit opt-in; on a
 /// supported architecture the CUDA ring is always DAX because it cannot
 /// function as a plain virtiofs mount.
@@ -68,6 +79,7 @@ mod tests {
         } else {
             assert_eq!(rootfs_dax_window(), 0);
             assert_eq!(user_mount_dax_window(Path::new("/opt/smolvm-ring")), 0);
+            assert_eq!(packed_layers_dax_window(), 0);
         }
     }
 }

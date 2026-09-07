@@ -1803,11 +1803,13 @@ pub fn launch_agent_vm(config: &LaunchConfig<'_>) -> Result<()> {
                         "packed-layer DAX requires libkrun with krun_add_virtiofs3",
                     ));
                 };
+                // Gated: the arm64 guest kernel has no FUSE_DAX, so this window
+                // must be zero there like every other virtiofs share.
                 if add_virtiofs3(
                     ctx,
                     tag.as_ptr(),
                     host_path.as_ptr(),
-                    super::virtiofs::DATA_DAX_WINDOW,
+                    super::virtiofs::packed_layers_dax_window(),
                     false,
                 ) < 0
                 {

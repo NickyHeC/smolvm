@@ -799,9 +799,8 @@ pub fn launch_agent_vm_dynamic(
         free_ctx_on_err!("krun_set_exec failed");
     }
 
-    // Packed image layers always use the shared data DAX window. User mounts
-    // follow the same explicit policy as every other launch path below.
-    // Add virtiofs mount for packed layers (AFTER set_exec)
+    // Add virtiofs mount for packed layers (AFTER set_exec). Its DAX window is
+    // gated like every other share: zero where the guest kernel has no FUSE_DAX.
     if config.layers_dir.exists() {
         let layers_tag = cstr("smolvm_layers");
         let layers_path = try_or_free_ctx!(
@@ -814,7 +813,7 @@ pub fn launch_agent_vm_dynamic(
                 ctx,
                 layers_tag.as_ptr(),
                 layers_path.as_ptr(),
-                super::virtiofs::DATA_DAX_WINDOW,
+                super::virtiofs::packed_layers_dax_window(),
                 false,
             )
         } < 0
