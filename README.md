@@ -401,6 +401,12 @@ welcome there. It is Markdown only, with no build to run; its
 [CONTRIBUTING.md](https://github.com/smol-machines/docs/blob/main/CONTRIBUTING.md) covers the
 page format and how a change reaches the site.
 
+Task-scoped procedures for agents and scripts live in [`skills/`](skills/), one directory per use
+case: install, teardown, dev-env, sandbox, local-api, docker-in-machine and gpu-cuda. Each carries
+a preflight script, the lifecycle commands, a cleanup that reaps what it started, and the traps
+that cost real time. [`AGENTS.md`](AGENTS.md#skills) has the table of which packet answers which
+task and how to load one.
+
 Bugs and feature requests for the runtime stay here.
 
 [Apache-2.0](LICENSE) · made by [@binsquare](https://github.com/BinSquare) · [twitter](https://x.com/binsquares) · [github](https://github.com/smol-machines/smolvm)
