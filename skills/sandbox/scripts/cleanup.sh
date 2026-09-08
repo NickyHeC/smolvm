@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# Cancel or clean up a sandbox run, then prove nothing is left running.
+#
+# usage: cleanup.sh [--cancel] [--purge]
+#   --cancel   kill the VMs run.sh recorded. THIS IS THE SANDBOX'S CANCEL.
+#              Ctrl-C is not: it returns the shell to you and leaves the VM
+#              running, invisible to `machine list`, until the untrusted
+#              workload finishes on its own (smol-machines/smolvm#1193).
+#   --purge    remove the recorded-pid file once nothing is left
+#
+# With no flags it waits, asserts the machine list is empty, and reports any VM
+# process still alive under this HOME's state.
+
+set -uo pipefail
+
+PACKET="sandbox"
+
+SMOLVM="${SMOLVM:-$(command -v smolvm 2>/dev/null)}"
+STATE_DIR="${SMOLVM_SKILL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/smolvm-skills}"
+PIDFILE="$STATE_DIR/$PACKET.vmpids"
+
+cancel=0
+purge=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --cancel) cancel=1 ;;
+        --purge)  purge=1 ;;
+        *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
+    esac
+    shift
+done
+
+if [ -z "$SMOLVM" ]; then
+    printf 'smolvm not found; set SMOLVM to its path\n' >&2
+    exit 2
+fi
+
+case "$(uname -s)" in
+    Darwin) VMS_DIR="$HOME/Library/Caches/smolvm/vms" ;;
+    *)      VMS_DIR="${SMOLVM_DATA_DIR:-$HOME/.cache/smolvm}/vms" ;;
+esac
+VMS_DIR="${SMOLVM_VMS_DIR:-$VMS_DIR}"
+
+# Match argv, never a pattern over the whole command line: `pgrep -f _boot-vm`
+# matches any shell whose text contains that string, including this script.
+# `readlink /proc/<pid>/exe` finds nothing instead: the VM process is not
+# dumpable, so its /proc entry is root-owned and readlink returns Permission
+# denied to the user who started it, leaving a reaper that reports no orphans
+# while an orphan runs. Scoping by the boot config's path leaves another
+# session's VM alone.
+list_vm_processes() {
+    case "$(uname -s)" in
+        Linux)
+            for p in /proc/[0-9]*; do
+                [ -r "$p/cmdline" ] || continue
+                sub="$(tr '\0' '\n' < "$p/cmdline" 2>/dev/null | sed -n '2p')"
+                [ "$sub" = "_boot-vm" ] || continue
+                cfg="$(tr '\0' '\n' < "$p/cmdline" 2>/dev/null | sed -n '3p')"
+                case "$cfg" in "$VMS_DIR"/*) printf '%s %s\n' "${p#/proc/}" "$cfg" ;; esac
+            done
+            ;;
+        Darwin)
+            ps -axo pid=,command= 2>/dev/null | while read -r pid rest; do
+                case "$rest" in *" _boot-vm "*) cfg="${rest#* _boot-vm }" ;; *) continue ;; esac
+                case "$cfg" in "$VMS_DIR"/*) printf '%s %s\n' "$pid" "$cfg" ;; esac
+            done
+            ;;
+    esac
+}
+
+# 1. Cancel: kill exactly the VMs run.sh recorded, and only those.
+if [ "$cancel" -eq 1 ]; then
+    if [ -s "$PIDFILE" ]; then
+        while read -r pid cfg; do
+            [ -n "$pid" ] || continue
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null && printf 'cancelled=%s config=%s\n' "$pid" "$cfg"
+            else
+                printf 'already_gone=%s\n' "$pid"
+            fi
+        done < "$PIDFILE"
+    else
+        printf 'cancelled=none_recorded\n'
+    fi
+fi
+
+# 2. An ephemeral machine's entry retires after the run returns, not with it, so
+# an immediate assertion fails on a healthy host. This is the single most likely
+# false failure in a scripted sandbox.
+sleep 20
+
+# 3. Assert values.
+listing="$("$SMOLVM" machine list 2>&1)"
+if printf '%s' "$listing" | grep -q 'No machines found'; then
+    printf 'machines=clean\n'
+else
+    printf 'machines=remaining\n'
+    printf '%s\n' "$listing" | sed 's/^/  /'
+fi
+
+# `_shared` is the image store bake.sh writes into. It is the cache, not
+# residue, so counting it as a leak gives a false positive on every host that
+# has ever baked.
+if [ -d "$VMS_DIR" ]; then
+    left="$(find "$VMS_DIR" -mindepth 1 -maxdepth 1 -type d ! -name _shared 2>/dev/null | wc -l | tr -d ' ')"
+else
+    left=0
+fi
+printf 'vm_dirs=%s\n' "$left"
+if [ "$left" -gt 0 ]; then
+    printf 'note=leftover VM directories are not necessarily a leak: smolvm serve start prints "Reclaimed N dangling VM data dir(es)" on startup and clears them.\n'
+fi
+
+# What a bake leaves behind is cache, not residue, and deleting it costs you the
+# offline route. Report both places it can live: `_shared` under the VM state,
+# and the pack cache, which is where a v1.14.2 bake actually landed on macOS.
+case "$(uname -s)" in
+    Darwin) PACK_CACHE="$HOME/Library/Caches/smolvm-pack" ;;
+    *)      PACK_CACHE="$HOME/.cache/smolvm-pack" ;;
+esac
+if [ -d "$VMS_DIR/_shared" ]; then
+    printf 'image_cache_shared=%s\n' "$(du -sk "$VMS_DIR/_shared" 2>/dev/null | awk '{printf "%dMB", $1/1024}')"
+else
+    printf 'image_cache_shared=absent\n'
+fi
+if [ -d "$PACK_CACHE" ]; then
+    printf 'image_cache_pack=%s\n' "$(du -sk "$PACK_CACHE" 2>/dev/null | awk '{printf "%dMB", $1/1024}')"
+else
+    printf 'image_cache_pack=absent\n'
+fi
+printf 'note=both caches are kept on purpose. Removing them costs you the offline route and the next bake pays for it again.\n'
+
+# 4. Verify: after a cancel, this is the assertion that the cancel worked.
+found=0
+while read -r pid cfg; do
+    [ -n "$pid" ] || continue
+    found=1
+    printf 'vm_process=%s config=%s\n' "$pid" "$cfg"
+done <<EOF
+$(list_vm_processes)
+EOF
+
+if [ "$found" -eq 0 ]; then
+    printf 'vm_processes=none\n'
+    [ "$purge" -eq 1 ] && rm -f "$PIDFILE"
+    printf 'result=clean\n'
+    exit 0
+fi
+
+printf 'result=vms_still_running\n'
+printf 'rerun with --cancel, after checking none of the above belongs to another session.\n'
+exit 1
