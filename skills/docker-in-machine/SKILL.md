@@ -5,7 +5,8 @@ description: Runs a Docker daemon inside a smolvm machine, for workloads that mu
 
 # A Docker daemon inside a machine
 
-Verified on **smolvm v1.14.2** on Linux aarch64 and macOS arm64. Done means `docker info` succeeds
+Verified on **smolvm v1.14.2** on Linux aarch64 and macOS arm64, and re-verified on **v1.14.3**
+on macOS arm64 on 2026-09-08. Done means `docker info` succeeds
 inside the guest, a nested container runs, and Docker's data sits on the ext4 storage disk rather
 than the rootfs overlay.
 
@@ -195,6 +196,14 @@ has `CONFIG_BRIDGE` and `CONFIG_POSIX_MQUEUE` both off, so `dockerd` fails on
 `error creating default "bridge" network: operation not supported`, and with `--bridge=none` the
 daemon comes up healthy while every container fails on `/dev/mqueue`. That result is from an
 earlier run on Windows 11 and was not repeated here.
+
+## Re-verified on v1.14.3
+
+Run 2026-09-08 PT against v1.14.3 on **macOS 26.6.2 arm64**: `Docker version 25.0.5`,
+`Server Version: 25.0.5`, `storage_driver=ok (overlay2)`, `docker_root_device=ok (/dev/vda)`,
+`nested_container=ok (NESTED_OK)`, `host_network=ok (HOSTNET_OK)`, `result=docker_ok`.
+
+**Not re-run on Linux on v1.14.3.** The Linux arm remains verified on v1.14.2.
 
 ## What was not run
 

@@ -194,6 +194,13 @@ result=FAILED
 
 The error names neither CUDA nor the missing device.
 
+## Re-verified on v1.14.3
+
+Run 2026-09-08 PT against v1.14.3 on macOS 26.6.2 arm64 and Lima `linux-kvm` (Ubuntu 24.04
+aarch64). Only `preflight.sh` could run, and on both hosts it correctly reports `gpu_present=no`
+and `result=blocked`. **No GPU host was available for this release either**, so every step in the
+list below is still unrun.
+
 ## What was not run
 
 **No GPU host was available for this packet.** Every step below is written from the earlier

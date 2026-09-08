@@ -5,7 +5,8 @@ description: Keeps a persistent smolvm machine with its dependencies already ins
 
 # A persistent dev machine
 
-Verified on **smolvm v1.14.2** on Linux aarch64 and macOS arm64. Done means a second `start` is
+Verified on **smolvm v1.14.2** on Linux aarch64 and macOS arm64, and re-verified on **v1.14.3**
+on macOS arm64 on 2026-09-08. Done means a second `start` is
 fast, skips provisioning, and the packages installed in the first session are still there.
 
 The whole use case turns on one fact the docs get wrong: **`init` runs once, not on every start.**
@@ -146,7 +147,9 @@ somewhere else.
 
 ## Platform arms
 
-- **Linux aarch64**: the scripts were run here, which is the verified platform for this use case.
+- **Linux aarch64**: the scripts were run here on v1.14.2, which is the verified platform for
+  this use case. **Not confirmed on v1.14.3**, for a host reason rather than a product one:
+  see the re-verification section below.
 - **macOS arm64**: the scripts were run here too, and every check passed. The material behind this
   packet had not exercised this use case on macOS.
 - **Linux x86_64**: verified in the material behind this packet, not re-run here.
@@ -224,6 +227,28 @@ failures_after_restart=0/20
 ```
 
 The changing hash is the tell: the workload container is being relaunched between execs.
+
+## Re-verified on v1.14.3
+
+Run 2026-09-08 PT against v1.14.3 from the published release.
+
+**macOS 26.6.2 arm64: full pass**, restart included.
+
+```
+init_ran=yes / machine_running=yes / workload_ready=yes
+init_ran_as=root / exec_user=app / workdir=/app / result=up
+init_ran_once=ok (yes)
+package_version=ok (2.34.2)
+home_file=ok (SURVIVES) / storage_file=ok (SURVIVES) / tmp_file=ok (WIPED)
+result=persistent
+```
+
+**Linux aarch64: not confirmed on v1.14.3, and the host is the reason.** The only Linux host
+available produced `agent did not become ready within 30 seconds` on **1 in 10** plain ephemeral
+runs that day, independent of version and of this packet, so a check that performs two starts and
+several execs fails often there. The same host also could not boot a VM at 8192 MiB at all. Treat
+the Linux arm as verified on v1.14.2 and unconfirmed on v1.14.3 until a healthy Linux host is
+available.
 
 ## What was not run
 

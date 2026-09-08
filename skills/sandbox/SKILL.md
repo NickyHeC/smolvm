@@ -5,7 +5,7 @@ description: Runs untrusted code in a throwaway smolvm microVM against a repo it
 
 # Running untrusted work in a throwaway machine
 
-Verified on **smolvm v1.14.2**. Done means the command's output landed in your writable directory,
+Verified on **smolvm v1.14.2**, and re-verified on **v1.14.3** on 2026-09-08. Done means the command's output landed in your writable directory,
 the repo is unchanged, the workload could not reach the network, and nothing is left running.
 
 **Two smolvm defects shape this packet and you will meet both.**
@@ -223,6 +223,25 @@ result=unsupported_on_macos
 A baked image is only useful to a run that also mounts something, and on macOS
 --oci-cache plus any -v mount times out the boot (smol-machines/smolvm#1192).
 ```
+
+## Re-verified on v1.14.3
+
+Run 2026-09-08 PT against v1.14.3 from the published release.
+
+**#1192 is still live**, reconfirmed on macOS 26.6.2 arm64 with both controls passing in the same
+session: `--oci-cache` with no mount is `OK`, mounts without `--oci-cache` is `OK`, and
+`--oci-cache` plus one `:ro` mount fails `3 of 3` with `agent did not become ready within
+30 seconds`. **#1193's mechanism is unchanged in the release source**: the pack-run path still
+forks a session leader that never execs and still starts the filesystem watcher in that child,
+and no parent-death arming was added.
+
+**macOS**: the network-on route passed end to end (`artifact=ok (42)`, `repo_unchanged=ok`,
+`result=sandbox_held`), and the cancel path worked, recording a VM pid and killing exactly it.
+
+**Linux**: the bake still fails for the reason `bake.sh` diagnoses, and the script's own control
+boot correctly identified it. The network-on route passed on that host on the second attempt; the
+first attempt hit the same `agent did not become ready` timeout the host produced on 1 in 10 plain
+runs that day.
 
 ## What was not run
 

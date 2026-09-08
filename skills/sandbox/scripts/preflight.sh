@@ -11,7 +11,7 @@
 
 set -uo pipefail
 
-VERIFIED_VERSION="1.14.2"
+VERIFIED_VERSION="1.14.3"
 
 # The guest gets eleven IRQs. Four -v mounts boot and five fail with "no more
 # IRQs are available", and any published port costs one of those slots, so the

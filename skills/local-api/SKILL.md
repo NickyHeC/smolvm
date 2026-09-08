@@ -5,7 +5,8 @@ description: Drives smolvm programmatically over its local HTTP API (smolvm serv
 
 # Driving smolvm over HTTP
 
-Verified on **smolvm v1.14.2** on macOS arm64 and Linux aarch64. Done means a machine went through
+Verified on **smolvm v1.14.2** on macOS arm64 and Linux aarch64, and re-verified on **v1.14.3**
+on both on 2026-09-08. Done means a machine went through
 its whole lifecycle over HTTP and `GET /api/v1/machines` is empty again at the end.
 
 Two rules run through everything here, and both are the same shape: **a 200 is not a result.**
@@ -193,6 +194,15 @@ registry, but this machine has no network, so the pull can never succeed. Add --
 
 A 404 on either host returns `{"error":"machine 'nope-does-not-exist' not found",
 "code":"NOT_FOUND"}`, which is the diagnostic Windows does not give you.
+
+## Re-verified on v1.14.3
+
+Run 2026-09-08 PT against v1.14.3 on macOS 26.6.2 arm64 and Lima `linux-kvm` (Ubuntu 24.04
+aarch64), over the Unix socket. **All eleven checks green on both**, including
+`failing_exec_exit_code=ok (3)`, the case that proves a guest failure arrives on an HTTP 200.
+
+The version mismatch in `references/api-fields.md` is **wider** on this release, not fixed:
+`serve openapi` still reports `info.version "0.5.2"` while `/health` reports `1.14.3`.
 
 ## What was not run
 

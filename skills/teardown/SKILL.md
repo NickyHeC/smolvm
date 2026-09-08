@@ -5,7 +5,8 @@ description: Stops every smolvm machine a session started, removes smolvm's stat
 
 # Leaving nothing running and nothing behind
 
-Verified on **smolvm v1.14.2**. This packet exists on its own because **almost every cleanup fact
+Verified on **smolvm v1.14.2**, and re-verified on **v1.14.3** on macOS arm64 and Linux
+aarch64 on 2026-09-08. This packet exists on its own because **almost every cleanup fact
 in smolvm is counterintuitive**: the obvious assertion gives a false failure, the obvious reaper
 matches the wrong process or nothing at all, and the command a user reaches for when a run
 misbehaves does not stop the machine. Anything that starts machines needs this more than it needs
@@ -164,6 +165,17 @@ result=clean
 
 against `--protected $HOME/.smolvm` on the macOS host, where a real v0.5.20 installation sits
 beside the isolated v1.14.2 one used for these runs.
+
+## Re-verified on v1.14.3
+
+Run 2026-09-08 PT against v1.14.3 on macOS 26.6.2 arm64 and Lima `linux-kvm` (Ubuntu 24.04
+aarch64). `preflight.sh` reports the same layout on both, and `verify-clean.sh` returns
+`result=clean`.
+
+The `serve start` reclaim in `references/traps.md` was re-confirmed by execution on Linux: a
+412 KB directory left by a failed bake showed as `vm_dirs=1`, `serve start` printed
+`Reclaimed 1 dangling VM data dir(es)`, and the count returned to zero. So a non-zero `vm_dirs` is
+still not by itself a leak.
 
 ## What was not run
 

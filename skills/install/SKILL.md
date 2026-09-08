@@ -5,7 +5,8 @@ description: Installs smolvm from a published release and proves the host can ac
 
 # Installing smolvm and proving it works
 
-Verified on **smolvm v1.14.2**. Done means `smolvm --version` prints the release version **and**
+Verified on **smolvm v1.14.2**, and re-verified on **v1.14.3** on macOS arm64 and Linux
+aarch64 on 2026-09-08. Done means `smolvm --version` prints the release version **and**
 a throwaway VM has run one command and exited. A version number alone proves nothing: on every
 platform here there is at least one way for the install to succeed and every VM start to fail.
 
@@ -68,7 +69,7 @@ processes an interrupt left behind, and kills them only with `--reap`.
 | key | meaning |
 |---|---|
 | `smolvm_installed`, `smolvm_version` | whether the binary is on `PATH` and what it says |
-| `verified_version`, `version_status` | `match`, `newer`, `older` or `unknown` against the 1.14.2 this packet was verified on |
+| `verified_version`, `version_status` | `match`, `newer`, `older` or `unknown` against the 1.14.3 this packet was verified on |
 | `platform` | `darwin-aarch64`, `linux-aarch64`, `linux-x86_64` |
 | `accel`, `accel_access` | `hvf` and `kern.hv_support`, or `kvm` and whether `/dev/kvm` is readable and writable |
 | `macos_version`, `hardware_verified` | `hardware_verified=no` on an Intel Mac: the installer accepts it and nothing here was run on one |
@@ -192,6 +193,13 @@ success: Removed cache directory <HOME>/Library/Caches/smolvm
 warning: You may want to remove the PATH entry from your shell profile.
 success: smolvm has been uninstalled
 ```
+
+## Re-verified on v1.14.3
+
+Run 2026-09-08 PT against v1.14.3 from the published release, into a fresh isolated `HOME` on
+macOS 26.6.2 arm64 and Lima `linux-kvm` (Ubuntu 24.04 aarch64). Both hosts: `result=ready` then
+`guest_ran=yes`, `guest_kernel=Linux 6.12.95`, `is_a_vm=yes`, `result=boot_ok`, and a clean
+cleanup. The guest kernel is unchanged from 1.14.2.
 
 ## What was not run
 
