@@ -5,6 +5,7 @@
 - `init` runs once, not on every start
 - `create` is not where the time goes, and not where failures appear
 - `exec` right after `start` can answer with a message instead of running
+- A missing host mount source lets a machine start once and never restart
 - `machine shell` does not start a stopped machine
 - A host `volumes` mount is not writable by a non-root `user`
 - `/tmp` is tmpfs and is wiped by a stop
@@ -66,6 +67,36 @@ immediately after a restart:
 probe that waits for empty output or a zero exit code reports ready while the container is still
 flapping, and the next three checks silently read that message as their answer. Both scripts here
 wait for the exact string `WORKLOAD_READY`.
+
+## A missing host mount source lets a machine start once and never restart
+
+**If a machine created from a Smolfile starts fine and then never starts again**, check that every
+host path in `volumes` exists. A Smolfile with `volumes = ["./src:/app"]` in a directory that has
+no `./src` creates and starts once, and every later `start` fails with:
+
+```
+Error: agent operation failed: start machine: agent operation failed: wait for ready:
+agent did not become ready within 30 seconds
+```
+
+which names neither the mount nor the missing directory, and reads exactly like host load.
+
+Measured on macOS 26.6.2 arm64 on v1.14.3, 2026-09-08, three create-start-stop-start cycles each
+with the workload confirmed ready before the stop:
+
+| host mount source | restarts |
+|---|---|
+| `./src` exists | **3 of 3** |
+| `./src` absent | **0 of 3** |
+
+`scripts/create-dev-machine.sh` runs `mkdir -p ./src` before creating, which is why the packet's
+own flow does not hit this. **Anything that writes its own Smolfile has to do the same.** A
+relative path in `volumes` resolves against the working directory, so the same Smolfile run from
+two directories can behave differently.
+
+This one cost real time while writing this packet: an ad-hoc restart loop that omitted the
+`mkdir -p` produced 0 of 5 and looked like a release regression until the two were compared
+side by side.
 
 ## `machine shell` does not start a stopped machine, despite its own help
 
