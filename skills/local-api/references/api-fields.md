@@ -19,9 +19,10 @@ smolvm serve openapi -o ./openapi.json
 `serve openapi` writes to **stdout** by default, so without `-o` you paste a 150 KB spec into your
 terminal. Read `components.schemas.CreateMachineRequest` before writing a create body.
 
-**The version in the spec is not the binary's.** On v1.14.2 the exported spec says
-`info.version = "0.5.2"` while `GET /health` on the same server says `"version":"1.14.2"`
-(observed on macOS arm64, 2026-09-07). Take the version from `/health`, never from the spec.
+**The version in the spec is not the binary's.** The exported spec says `info.version = "0.5.2"`
+while `GET /health` on the same server reports the real one: `"1.14.2"` observed on macOS arm64 on
+2026-09-07, and `"1.14.3"` on 2026-09-08. The gap widens with every release, because the spec's
+number is hardcoded. Take the version from `/health`, never from the spec.
 
 ## The create body's field names are not the CLI's flags
 
@@ -32,6 +33,14 @@ allowedCidrs  allowedHosts  autoGraph  blobPeers  cmd  cpus  cuda  dockerSocket
 entrypoint  env  from  gpu  image  memoryMb  mounts  name  network  networkBackend
 overlayGb  ports  registryIdentityToken  registryRef  restart  secrets  storageGb  workdir
 ```
+
+**v1.14.3 adds `blockIo`**, selecting the block I/O engine, and adds host and guest memory fields
+to the responses (`hostMemoryAvailableMb`, `usedMemoryPssMb` and neighbours). `blockIo` defaults to
+unset, so leaving it out keeps the behaviour this packet describes. Asking for the async engine on
+a host without `io_uring` fails the boot with a message naming the way out
+(`use --block-io sync`), which is a boot failure mode none of the other packets mention. **Export
+the spec against your own binary rather than trusting this list**, which is a snapshot of two
+releases.
 
 The three worth memorising, because the CLI trains you to write the other thing:
 
