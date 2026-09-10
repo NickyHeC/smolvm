@@ -568,8 +568,8 @@ pub struct RunCmd {
     #[arg(long = "net-backend", value_enum, help_heading = "Network")]
     pub net_backend: Option<NetworkBackend>,
 
-    /// Custom DNS resolver for the guest (implies --net). Use this when the
-    /// default public resolvers (8.8.8.8/1.1.1.1) are blocked on your network.
+    /// Custom DNS resolver for the guest (implies --net). Defaults to the host's
+    /// own resolver, so this is only needed when that is not the one to use.
     #[arg(long, value_name = "IP", help_heading = "Network")]
     pub dns: Option<std::net::Ipv4Addr>,
 
@@ -1161,6 +1161,7 @@ impl RunCmd {
                 port: port.into_iter().map(PortMappingSpec::from).collect(),
                 net: self.net,
                 net_backend: self.net_backend,
+                dns: self.dns,
                 cpus: self.cpus,
                 mem: self.mem,
                 storage: self.storage,
@@ -1308,6 +1309,7 @@ impl RunCmd {
                         .collect(),
                     net: params.net,
                     net_backend: params.network_backend,
+                    dns: params.dns,
                     cpus: Some(params.cpus),
                     mem: Some(params.mem),
                     storage: params.storage_gb,
@@ -1427,6 +1429,7 @@ impl RunCmd {
                     .collect(),
                 net: params.net,
                 net_backend: params.network_backend,
+                dns: params.dns,
                 cpus: Some(params.cpus),
                 mem: Some(params.mem),
                 storage: params.storage_gb,
@@ -3259,8 +3262,8 @@ pub struct CreateCmd {
     #[arg(long = "net-backend", value_enum)]
     pub net_backend: Option<NetworkBackend>,
 
-    /// Custom DNS resolver for the guest (implies --net). Use this when the
-    /// default public resolvers (8.8.8.8/1.1.1.1) are blocked on your network.
+    /// Custom DNS resolver for the guest (implies --net). Defaults to the host's
+    /// own resolver, so this is only needed when that is not the one to use.
     #[arg(long, value_name = "IP")]
     pub dns: Option<std::net::Ipv4Addr>,
 
