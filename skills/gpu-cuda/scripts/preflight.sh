@@ -32,7 +32,7 @@ if [ -n "${version:-}" ] && [ "$version" != "unknown" ]; then
         newest="$(printf '%s\n%s\n' "$version" "$VERIFIED_VERSION" | sort -V | tail -1)"
         if [ "$newest" = "$version" ]; then
             emit version_status newer
-            note "this packet was verified on $VERIFIED_VERSION and the binary is $version; nothing here has been re-run on a GPU host since, so check each step's output against the binary"
+            note "this packet was verified on $VERIFIED_VERSION and the binary is $version; the GPU path was last exercised on an A10 on $VERIFIED_VERSION, so check each step's output against the binary"
         else
             emit version_status older
         fi

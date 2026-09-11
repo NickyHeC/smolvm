@@ -1,7 +1,9 @@
 # CUDA on Windows: it works, and the documentation says it does not
 
-**Not re-run by this packet.** Executed once on Windows 11 Home build 26200 x86_64 with an
-**NVIDIA GeForce RTX 4050 Laptop GPU** (driver 566.26, 6141 MiB) against smolvm v1.14.2.
+**Re-run on 2026-09-11 against smolvm v1.14.6** on Windows 11 Home build 10.0.26200.0 UBR 9445
+x86_64 with an **NVIDIA GeForce RTX 4050 Laptop GPU** (driver 32.0.15.6626), in an elevated
+session. The probe, the two absences and the shim in a plain `alpine` guest all reproduced. The
+Vulkan note and the documentation section further down are from the earlier run on v1.14.2.
 
 `--cuda` injects the same remoting shim as on Linux and the guest reaches the real device:
 
@@ -9,27 +11,42 @@
 & $exe machine run --cuda --net --mem 6144 -v "$probe:/probe" --image python:3.12-slim -- python3 /probe/probe.py
 ```
 
-Observed, 13.4 s:
+Observed on v1.14.6, from the packet's own `scripts/cuda-probe.py`:
 
 ```
+load_shim -> ok /opt/smolvm-cuda/libcuda.so.1
 cuInit -> 0
 cuDeviceGetCount -> 0 count = 1
 cuDeviceGetName -> 0 name = NVIDIA GeForce RTX 4050 Laptop GPU
 cuCtxCreate -> 0
 cuMemGetInfo -> 0 total MiB = 6140
-cuMemAlloc -> 0
+cuMemAlloc   -> 0
 cuMemcpyHtoD -> 0
 cuMemcpyDtoH -> 0
-roundtrip 16 bytes match: True
+roundtrip first 16 bytes match: True
+cuMemFree    -> 0
+exit : 0
 ```
 
 **The 1 MiB round trip is the assertion that matters**: bytes went to the device and came back
-unchanged, so this is not a stub.
+unchanged, so this is not a stub. The device name is the other one.
 
-The shim is present even in a non-CUDA image: `machine run --cuda --image alpine` shows
-`/opt/smolvm-cuda` containing `libcuda.so.1`, `libcudart`, `libcublas*` and `libcudnn*`. As on
-Linux, the guest gets no `/dev/nvidia*` and `nvidia-smi` is absent, which is the documented
-remoting design.
+## The two absences are correct
+
+In a `--cuda` guest on v1.14.6, `/opt/smolvm-cuda` holds sixteen entries including `libcuda.so.1`,
+`libcudart*`, `libcublas*`, `libcudnn*` and `proto-hash`, while:
+
+```
+ls: cannot access '/dev/nvidia*': No such file or directory
+nvidia-smi absent
+```
+
+Both absences are the documented remoting design, not a broken setup. The driver API is the check,
+and the probe above is what runs it.
+
+The shim is injected even in a non-CUDA image: on v1.14.6 `machine run --cuda --image alpine` still
+shows `/opt/smolvm-cuda` populated in a plain `alpine` guest. It cannot be loaded there, because
+the shim is glibc, which is the next note.
 
 ## Windows-specific notes
 

@@ -5,15 +5,16 @@ description: Runs CUDA compute workloads inside a smolvm microVM against a real 
 
 # CUDA inside a machine
 
-Built on a verified run of **smolvm v1.14.2** against an **NVIDIA A10** (Linux x86_64) and an
-**NVIDIA GeForce RTX 4050** (Windows x86_64). Done means a program in the VM opens the device,
-creates a context, and moves data to and from it.
+Verified on **smolvm v1.14.6** against an **NVIDIA A10** (driver 580.105.08, Linux x86_64,
+kernel 6.8.0-1046-nvidia), and on the same version against an **NVIDIA GeForce RTX 4050**
+(driver 32.0.15.6626, Windows x86_64). Done means a program in the VM opens the device, creates a context, and moves
+data to and from it.
 
-> **Read this before trusting a step here.** **No GPU host was available when this packet was
-> written**, so every step that needs one is written from those earlier runs and **was not
-> re-run**. What was re-run, on macOS arm64 and Ubuntu 24.04 aarch64, is `scripts/preflight.sh`
-> and the failure path of `scripts/run-cuda-probe.sh` on a host with no NVIDIA hardware. The
-> section "What was not run" lists every step individually.
+> **Read this before trusting a step here.** **The Linux GPU path was re-run end to end on
+> v1.14.6**, on a rented A10 instance: the preflight, the probe against the real device with two
+> different glibc images, all three eval prompts, and the cleanup. **Windows was re-run on
+> v1.14.6 too**, on 2026-09-11 against an RTX 4050: the probe, the two absences and the shim in a
+> plain `alpine` guest. The section "What was not run" lists every remaining step individually.
 
 ## How this works, and why the checks are shaped this way
 
@@ -55,9 +56,10 @@ data_roundtrip=ok
 result=cuda_ok
 ```
 
-On the A10, `cuda-probe.py`'s own output was:
+On the A10 on v1.14.6, `cuda-probe.py`'s own output was:
 
 ```
+load_shim -> ok /opt/smolvm-cuda/libcuda.so.1
 cuInit -> 0
 cuDeviceGetCount -> 0 count = 1
 cuDeviceGetName -> 0 name = NVIDIA A10
@@ -77,8 +79,11 @@ device.
 
 ```bash
 scripts/cleanup.sh --purge
-smolvm machine prune
+smolvm machine prune --name <NAME> --all   # any persistent --cuda machine you kept
 ```
+
+The probe runs are ephemeral and leave nothing to prune; `machine prune` takes a machine name and
+is rejected without one.
 
 `--cuda` changes nothing on the host: the shim is injected inside the guest only. Verified after a
 full session of CUDA runs plus a Kubernetes install and teardown on the same box, where
@@ -117,11 +122,13 @@ Full detail in `references/traps.md`.
 
 ## Platform arms
 
-- **Linux x86_64 with an NVIDIA GPU**: **verified on an A10**, in the run this packet is built
-  from. Not re-run.
-- **Windows x86_64 with an NVIDIA GPU**: **verified on an RTX 4050**, including a 1 MiB device
-  round trip. Not re-run. `references/windows.md`. **This contradicts three documentation pages**,
-  which this branch corrects.
+- **Linux x86_64 with an NVIDIA GPU**: **verified on an A10 on v1.14.6** (driver 580.105.08,
+  kernel 6.8.0-1046-nvidia), preflight through cleanup, with the probe run against two glibc
+  images.
+- **Windows x86_64 with an NVIDIA GPU**: **verified on an RTX 4050 on v1.14.6**, on 2026-09-11
+  (driver 32.0.15.6626), including the device name and a 1 MiB device round trip.
+  `references/windows.md`. **This contradicts three documentation pages**, which this branch
+  corrects.
 - **macOS arm64 and Intel**: **not applicable.** No Mac has an NVIDIA GPU, so `--cuda` has nothing
   to reach. The preflight says so rather than letting a run time out.
 - **Linux aarch64**: no NVIDIA hardware on the hosts available here. Only the preflight and the
@@ -133,10 +140,11 @@ Full detail in `references/traps.md`.
 The first two need a GPU host and are recorded from the earlier runs; the third was run in this
 session. Which is which is stated per prompt.
 
-**1. "Run a CUDA workload in a smolvm machine and prove it reached the GPU." (not re-run; from the
-A10 run, v1.14.2)**
+**1. "Run a CUDA workload in a smolvm machine and prove it reached the GPU." (re-run on v1.14.6
+on the A10)**
 
 ```
+load_shim -> ok /opt/smolvm-cuda/libcuda.so.1
 cuInit -> 0
 cuDeviceGetCount -> 0 count = 1
 cuDeviceGetName -> 0 name = NVIDIA A10
@@ -150,15 +158,48 @@ cuMemFree    -> 0
 ```
 
 **2. "`nvidia-smi` is not in my `--cuda` guest and there is no `/dev/nvidia0`. Is the GPU
-working?" (not re-run; from the A10 run)**
+working?" (re-run on v1.14.6 on the A10)**
 
-Both absences are correct. The guest showed `/opt/smolvm-cuda/libcuda.so`,
-`/opt/smolvm-cuda/libcuda.so.1` and `SMOLVM_CUDA_ZEROCOPY=1` in the environment, while
-`ls /dev/nvidia*` returned `No such file or directory` and `nvidia-smi` was not present in the base
-image. The driver API is the check.
+Both absences are correct. Inside a `--cuda` guest on `python:3.12-slim`:
 
-**3. "Can this machine run CUDA?" (run in this session, 2026-09-07 PT, on two hosts with no NVIDIA
-hardware)**
+```
+--- /opt/smolvm-cuda ---
+libcublas.so.11
+libcublas.so.12
+libcublas.so.13
+libcublasLt.so.11
+libcublasLt.so.12
+libcublasLt.so.13
+libcuda.so
+libcuda.so.1
+--- /dev/nvidia* ---
+ls: cannot access '/dev/nvidia*': No such file or directory
+--- nvidia-smi ---
+nvidia-smi: not present in the image
+--- SMOLVM_CUDA env ---
+SMOLVM_CUDA_ZEROCOPY=1
+```
+
+The driver API is the check, and the probe above is what runs it.
+
+**3. "Can this machine run CUDA?" (re-run on v1.14.6; the A10 answer is new, the two negative
+answers are from hosts with no NVIDIA hardware)**
+
+On the A10, where the answer is yes:
+
+```
+platform=linux-x86_64
+accel=kvm
+accel_access=ok
+gpu_present=yes
+gpu=NVIDIA A10, 580.105.08
+host_libcuda=1
+guest_needs_glibc_image=yes
+guest_shim_path=/opt/smolvm-cuda/libcuda.so.1
+result=ready
+```
+
+And where it is no:
 
 macOS 26.6.2 arm64:
 
@@ -196,22 +237,56 @@ The error names neither CUDA nor the missing device.
 
 ## Re-verified on v1.14.6
 
-Run 2026-09-10 PT against v1.14.6 on macOS 26.6.2 arm64 and Lima `linux-kvm` (Ubuntu 24.04
-aarch64). Only `preflight.sh` could run, and on both hosts it correctly reports `gpu_present=no`
-and `result=blocked`. **No GPU host was available for this release either**, so every step in the
-list below is still unrun.
+Run 2026-09-11 PT against v1.14.6 from the published release, installed into an isolated data root
+on a rented **NVIDIA A10** instance: 30 vCPU Intel Xeon Platinum 8358, 222 GiB memory, kernel
+6.8.0-1046-nvidia, driver 580.105.08, 23028 MiB of device memory.
+
+**The GPU path is no longer written from an earlier run.** preflight, probe, all three eval
+prompts and cleanup were executed in the packet's own order:
+
+```
+preflight            result=ready, gpu_present=yes, gpu=NVIDIA A10, 580.105.08, host_libcuda=1
+probe, default image device_named=ok, data_roundtrip=ok, result=cuda_ok
+probe, second image  device_named=ok, data_roundtrip=ok, result=cuda_ok
+cleanup --purge      machines=clean, vm_processes=none
+```
+
+The probe was run against **two** glibc images, `python:3.12-slim` and `python:3.12-bookworm`, and
+both reported `name = NVIDIA A10` and `total MiB = 22587` with the 1 MiB round trip returning the
+same bytes.
+
+**The host is untouched by `--cuda`, and that is now measured rather than quoted.** After the
+session `nvidia-smi` reported `NVIDIA A10, 580.105.08, 23028 MiB, 0 MiB` used, a whole-filesystem
+sweep for `*smolvm*` outside the install prefix and the data root returned nothing, and the eight
+NVIDIA kernel modules were still loaded.
+
+**The KVM precondition in the traps reproduced on this instance.** A fresh box has `/dev/kvm` as
+`root:kvm` with the login user outside the group, so the preflight reported `KVM_DENIED` until the
+group was granted. The single-command `sg kvm -c` form the traps recommend was not the route used
+here; a group change plus a new login session was.
+
+**One step failed as written on v1.14.6 and is now fixed.** The cleanup section said `smolvm
+machine prune` bare, which the CLI rejects:
+
+```
+$ smolvm machine prune
+Usage: smolvm machine prune --name <NAME>
+```
+
+Its help reads as host-wide ("Remove unused images and layers to free disk space") while the
+command prunes one machine's unreferenced layers, `--all` its cached images. The section now names
+the machine and says the ephemeral probe runs leave nothing to prune.
 
 ## What was not run
 
-**No GPU host was available for this packet.** Every step below is written from the earlier
-verified runs and was not repeated:
+The Linux GPU path was re-run on v1.14.6, and the Windows one on 2026-09-11. What remains unrun:
 
-- The probe against a real device, on Linux x86_64 and on Windows.
-- `--cuda` with a CUDA base image (`nvidia/cuda:...`), and the `apt-get install -y python3` those
-  images need.
-- The observation that `--cuda` leaves no host NVIDIA state behind.
-- The `sg kvm -c` remedy on a fresh GPU cloud instance.
-- Everything in `references/windows.md`.
+- **The preflight and the cleanup on Windows.** `scripts/*.sh` are POSIX shell and do not run
+  there, so the 2026-09-11 v1.14.6 run issued the probe and the eval prompts by hand.
+- **`--cuda` with a CUDA base image** (`nvidia/cuda:...`), and the `apt-get install -y python3`
+  those images need. Both probe runs used a Python image, which is what the packet recommends.
+- **The `sg kvm -c` single-command remedy.** The `KVM_DENIED` state it addresses did reproduce on
+  a fresh instance; the fix applied was a group change and a new session.
 
 Never run anywhere, then or now:
 
