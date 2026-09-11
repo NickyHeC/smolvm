@@ -102,6 +102,7 @@ to end on a published release; each says which steps were not.
 | Drive smolvm over its local HTTP API | `local-api` | as install, plus `auth=none`, transport availability, `curl` and `python3` | a substitute for the CLI in a shell script |
 | Run a Docker daemon inside a machine | `docker-in-machine` | as install, plus whether this platform can do it at all | Windows, where the guest kernel cannot; running OCI images, which smolvm does natively |
 | Run CUDA compute against a host GPU | `gpu-cuda` | GPU and driver, KVM access, host `libcuda` count, glibc image requirement | Vulkan (`--gpu`), which works on no tested host |
+| Ship a machine or an image as one portable file | `pack` | as install, plus free memory against the exporter's fixed 8192 MiB | a machine you keep and re-enter; carrying an artifact to another architecture |
 
 Each directory holds `SKILL.md` (the procedure), `scripts/` (preflight, the lifecycle, cleanup) and
 `references/` (traps and per-platform arms, read when the situation calls for them). Scripts are
