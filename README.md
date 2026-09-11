@@ -403,7 +403,7 @@ page format and how a change reaches the site.
 
 Task-scoped procedures for agents and scripts live in [`skills/`](skills/), one directory per use
 case: `install`, `teardown`, `sandbox`, `dev-env`, `local-api`, `docker-in-machine` and
-`gpu-cuda`. Each carries a preflight script,
+`gpu-cuda` and `pack`. Each carries a preflight script,
 the lifecycle commands, a cleanup that reaps what it started, and the traps that cost real time.
 [`AGENTS.md`](AGENTS.md#skills) has the table of which packet answers which task, and how an agent
 finds them.

@@ -261,3 +261,4 @@ is confirmed here.
 
 - `install` for the boot this assumes, and `teardown` for the cleanup script.
 - `docker-in-machine` for the clearest case of the `init`-runs-once trap.
+- `pack` for turning the machine this packet builds into a portable artifact.

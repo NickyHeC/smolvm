@@ -218,4 +218,4 @@ cleanup. The guest kernel is unchanged across 1.14.2, 1.14.3 and 1.14.6.
 
 - `teardown` for the full removal sequence, and for what a leak check must exclude.
 - `sandbox` for running untrusted work in a throwaway machine, which assumes this boot.
-- `dev-env`, `local-api`, `docker-in-machine` and `gpu-cuda` all assume it too.
+- `dev-env`, `local-api`, `docker-in-machine`, `gpu-cuda` and `pack` all assume it too.
