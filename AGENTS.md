@@ -98,9 +98,10 @@ to end on a published release; each says which steps were not.
 | Install smolvm and prove the host boots a VM | `install` | version, platform, KVM or `kern.hv_support`, macOS socket path length, Intel Mac stated unverified | anything after the first boot |
 | Stop everything and remove smolvm's state | `teardown` | every state directory with its size, image caches, `PATH` block, whether state can be relocated | deleting machines another session created |
 | Run untrusted code, no network, repo read-only | `sandbox` | as install, plus mounts plus ports against the device budget, and whether the offline shape works here | a machine you re-enter; anything needing state to survive |
-
-More packets follow with the same shape: a persistent dev environment, the local HTTP API, Docker
-inside a machine, and CUDA against a host GPU.
+| Keep a machine with its dependencies, re-enter it later | `dev-env` | as install, plus `restart_after_stop` | untrusted code; a machine that must leave nothing behind |
+| Drive smolvm over its local HTTP API | `local-api` | as install, plus `auth=none`, transport availability, `curl` and `python3` | a substitute for the CLI in a shell script |
+| Run a Docker daemon inside a machine | `docker-in-machine` | as install, plus whether this platform can do it at all | Windows, where the guest kernel cannot; running OCI images, which smolvm does natively |
+| Run CUDA compute against a host GPU | `gpu-cuda` | GPU and driver, KVM access, host `libcuda` count, glibc image requirement | Vulkan (`--gpu`), which works on no tested host |
 
 Each directory holds `SKILL.md` (the procedure), `scripts/` (preflight, the lifecycle, cleanup) and
 `references/` (traps and per-platform arms, read when the situation calls for them). Scripts are
