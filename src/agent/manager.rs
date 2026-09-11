@@ -1229,6 +1229,16 @@ impl AgentManager {
         self.console_log.as_deref()
     }
 
+    /// The guest console's contents, when the file exists and has anything in
+    /// it. Read at failure time: the file lives only as long as the VM
+    /// directory, which an ephemeral run removes on the way out.
+    fn read_console_log(&self) -> Option<String> {
+        std::fs::read_to_string(self.console_log.as_deref()?)
+            .ok()
+            .map(|content| content.trim().to_string())
+            .filter(|content| !content.is_empty())
+    }
+
     /// Get the storage disk path.
     pub fn storage_path(&self) -> &Path {
         self.storage_disk.path()
@@ -1421,7 +1431,8 @@ impl AgentManager {
         }
         let log = std::fs::read_to_string(&self.startup_error_log).ok();
         let log = log.as_deref().map(str::trim).filter(|l| !l.is_empty());
-        Some(boot_failure_reason(exit_code, log))
+        let console = self.read_console_log();
+        Some(boot_failure_reason(exit_code, log, console.as_deref()))
     }
 
     /// The PID of the VM process this manager spawned, once it has.
@@ -3019,9 +3030,10 @@ impl AgentManager {
                                 .ok()
                                 .map(|content| content.trim().to_string())
                                 .filter(|content| !content.is_empty());
+                            let console = self.read_console_log();
                             return Err(Error::agent(
                                 "monitor agent",
-                                boot_failure_reason(exit_code, log.as_deref()),
+                                boot_failure_reason(exit_code, log.as_deref(), console.as_deref()),
                             ));
                         }
                     }
@@ -3092,9 +3104,10 @@ impl AgentManager {
                             .ok()
                             .map(|content| content.trim().to_string())
                             .filter(|content| !content.is_empty());
+                        let console = self.read_console_log();
                         return Err(Error::agent(
                             "monitor agent",
-                            boot_failure_reason(exit_code, log.as_deref()),
+                            boot_failure_reason(exit_code, log.as_deref(), console.as_deref()),
                         ));
                     }
                 }
@@ -3290,35 +3303,48 @@ fn fatal_signal_name(code: i32) -> Option<&'static str> {
     })
 }
 
-fn boot_failure_reason(exit_code: Option<i32>, startup_log: Option<&str>) -> String {
-    let real_error = startup_log
-        .and_then(|log| {
-            log.lines()
-            .rev()
-            .find_map(|line| {
-                let lower = line.to_ascii_lowercase();
-                if lower.contains("error")
-                    || lower.contains("panic")
-                    || lower.contains("krun_start_enter returned")
-                {
-                    Some(line.trim().to_string())
-                } else {
-                    None
-                }
-            })
-            // Everything in the startup-error log is error content — e.g.
-            // "agent operation failed: load libkrun: symbol not found: …"
-            // carries neither "error" nor "panic", and dropping it leaves the
-            // user with only the generic exit-code note. Fall back to the last
-            // non-empty line so the actionable message always surfaces.
-            .or_else(|| {
-                log.lines()
-                    .rev()
-                    .map(str::trim)
-                    .find(|l| !l.is_empty())
-                    .map(str::to_string)
-            })
+/// The single line worth surfacing from a log: the last error-like line, else
+/// the last non-empty one.
+///
+/// Everything in the startup-error log is error content, e.g.
+/// "agent operation failed: load libkrun: symbol not found: …" carries neither
+/// "error" nor "panic", and dropping it leaves the user with only the generic
+/// exit-code note. Fall back to the last non-empty line so the actionable
+/// message always surfaces.
+fn last_significant_line(log: &str) -> Option<String> {
+    log.lines()
+        .rev()
+        .find_map(|line| {
+            let lower = line.to_ascii_lowercase();
+            if lower.contains("error")
+                || lower.contains("panic")
+                || lower.contains("krun_start_enter returned")
+            {
+                Some(line.trim().to_string())
+            } else {
+                None
+            }
         })
+        .or_else(|| {
+            log.lines()
+                .rev()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .map(str::to_string)
+        })
+}
+
+/// Longest console line carried into the failure message; a guest can print
+/// arbitrarily long lines and this message goes in a one-line error.
+const CONSOLE_LINE_MAX: usize = 200;
+
+fn boot_failure_reason(
+    exit_code: Option<i32>,
+    startup_log: Option<&str>,
+    console_log: Option<&str>,
+) -> String {
+    let real_error = startup_log
+        .and_then(last_significant_line)
         .map(|error| {
             if error.contains("Failure during vcpu run: Cannot allocate memory (os error 12)") {
                 format!(
@@ -3354,9 +3380,22 @@ fn boot_failure_reason(exit_code: Option<i32>, startup_log: Option<&str>) -> Str
         None => "agent process exited during startup".to_string(),
     };
 
-    match real_error {
-        Some(err) => format!("{err} ({code_note})"),
-        None => code_note,
+    // Two logs, two layers: the startup log is the host side, written by the
+    // VMM before it died; the console is the guest's own last words, written
+    // when the VMM ran and the guest failed. Startup leads when both exist.
+    let guest_error = console_log.and_then(last_significant_line).map(|line| {
+        let mut bounded: String = line.chars().take(CONSOLE_LINE_MAX).collect();
+        if bounded.chars().count() < line.chars().count() {
+            bounded.push_str("...");
+        }
+        bounded
+    });
+
+    match (real_error, guest_error) {
+        (Some(err), Some(guest)) => format!("{err} ({code_note}); guest console: {guest}"),
+        (Some(err), None) => format!("{err} ({code_note})"),
+        (None, Some(guest)) => format!("guest console: {guest} ({code_note})"),
+        (None, None) => code_note,
     }
 }
 
@@ -3665,7 +3704,7 @@ mod tests {
     fn boot_failure_native_crash_gets_dll_hint() {
         // 0xC0000005 (access violation) — a mismatched/corrupt DLL, not whatever
         // benign WARN was logged last. The hint must name the DLLs + WHP.
-        let r = boot_failure_reason(Some(0xC000_0005u32 as i32), None);
+        let r = boot_failure_reason(Some(0xC000_0005u32 as i32), None, None);
         assert!(r.contains("0xC0000005"), "{r}");
         assert!(r.contains("krun.dll") && r.contains("WHP"), "{r}");
     }
@@ -3674,7 +3713,7 @@ mod tests {
     fn boot_failure_prefers_real_error_over_warn() {
         // A benign WARN must never be surfaced when the log also has a real error.
         let log = "WARN failed to set console output\nError: kernel not found";
-        let r = boot_failure_reason(Some(1), Some(log));
+        let r = boot_failure_reason(Some(1), Some(log), None);
         assert!(r.contains("kernel not found"), "{r}");
         assert!(!r.starts_with("WARN"), "{r}");
     }
@@ -3686,7 +3725,7 @@ mod tests {
         // found… set SMOLVM_LIB_DIR") contain neither "error" nor "panic";
         // the last non-empty log line must surface anyway.
         let log = "agent operation failed: load libkrun: symbol not found: krun_add_disk2\n";
-        let r = boot_failure_reason(Some(1), Some(log));
+        let r = boot_failure_reason(Some(1), Some(log), None);
         assert!(r.contains("krun_add_disk2"), "{r}");
         assert!(r.contains("code 1"), "{r}");
     }
@@ -3694,7 +3733,7 @@ mod tests {
     #[test]
     fn boot_failure_identifies_the_affected_host_kvm_enomem() {
         let log = "[ERROR krun_vmm::linux::vstate] Failure during vcpu run: Cannot allocate memory (os error 12)";
-        let reason = boot_failure_reason(Some(1), Some(log));
+        let reason = boot_failure_reason(Some(1), Some(log), None);
         assert!(
             reason.contains("affected-host KVM first-run bug"),
             "{reason}"
@@ -3706,23 +3745,92 @@ mod tests {
     /// a VM killed by a signal leaves no message and no core to look at.
     #[test]
     fn boot_failure_names_the_fatal_signal() {
-        let r = boot_failure_reason(Some(128 + 11), None);
+        let r = boot_failure_reason(Some(128 + 11), None, None);
         assert!(r.contains("SIGSEGV"), "got: {r}");
-        let r = boot_failure_reason(Some(128 + 6), Some("virgl: something broke\n"));
+        let r = boot_failure_reason(Some(128 + 6), Some("virgl: something broke\n"), None);
         assert!(
             r.contains("SIGABRT") && r.contains("virgl: something broke"),
             "got: {r}"
         );
         // Plain exit codes keep their existing wording.
-        let r = boot_failure_reason(Some(3), None);
+        let r = boot_failure_reason(Some(3), None, None);
         assert!(r.contains("exited (code 3)"), "got: {r}");
+    }
+
+    // Issue #942: since v1.14.0 the guest console is captured to
+    // agent-console.log beside the startup log, but the failure message was
+    // built from the startup log alone. A guest that dies on its own, exec of
+    // /sbin/init failing after a rootfs extraction lost its symlinks, wrote
+    // "Couldn't execute '/sbin/init': ENOENT" to that file while the user saw
+    // only "boot process exited (code 127)" and a list of guesses, and the file
+    // vanished with the VM directory on an ephemeral run.
+    #[test]
+    fn boot_failure_surfaces_the_guest_console_when_the_startup_log_is_empty() {
+        let console = "smolvm-agent starting\nCouldn't execute '/sbin/init': ENOENT\n";
+        let r = boot_failure_reason(Some(127), None, Some(console));
+        assert!(r.contains("Couldn't execute '/sbin/init': ENOENT"), "{r}");
+        assert!(r.contains("guest console"), "{r}");
+        // The exit-code note still rides along, so the user keeps both halves.
+        assert!(r.contains("code 127"), "{r}");
+        // The guess list only stands in when neither file said anything.
+        assert_ne!(r, boot_failure_reason(Some(127), None, None));
+    }
+
+    /// The two logs describe different layers, so both appear, and the host
+    /// side leads: when the VMM itself failed, its reason is the actionable one.
+    #[test]
+    fn boot_failure_puts_the_startup_error_first_when_both_logs_have_content() {
+        let startup = "Error: kernel not found";
+        let console = "Couldn't execute '/sbin/init': ENOENT";
+        let r = boot_failure_reason(Some(1), Some(startup), Some(console));
+        let startup_at = r.find("kernel not found").expect("startup error present");
+        let console_at = r.find("ENOENT").expect("console line present");
+        assert!(startup_at < console_at, "startup must lead: {r}");
+        assert!(r.contains("code 1"), "{r}");
+    }
+
+    /// An absent or blank console must not change a message that was already
+    /// correct, which is what keeps every pre-existing failure path identical.
+    #[test]
+    fn boot_failure_is_unchanged_by_an_empty_console() {
+        let startup = "agent operation failed: load libkrun: symbol not found: krun_add_disk2";
+        let baseline = boot_failure_reason(Some(1), Some(startup), None);
+        assert_eq!(
+            boot_failure_reason(Some(1), Some(startup), Some("")),
+            baseline
+        );
+        assert_eq!(
+            boot_failure_reason(Some(1), Some(startup), Some("   \n\n")),
+            baseline
+        );
+        assert_eq!(
+            boot_failure_reason(Some(127), None, Some("")),
+            boot_failure_reason(Some(127), None, None)
+        );
+    }
+
+    /// A chatty guest must not flood a one-line error message.
+    #[test]
+    fn boot_failure_bounds_a_long_console_line() {
+        let long = "E".repeat(5_000);
+        let r = boot_failure_reason(Some(127), None, Some(&long));
+        assert!(r.contains("..."), "a truncated line must say so: {r}");
+        // The console contributes its bound plus the ellipsis, nothing near 5000.
+        assert!(
+            r.chars().count() < CONSOLE_LINE_MAX + 200,
+            "message ran to {} chars: {r}",
+            r.chars().count()
+        );
+        // Truncation is by characters, so a multi-byte console cannot panic.
+        let wide = "\u{1f600}".repeat(5_000);
+        let _ = boot_failure_reason(Some(127), None, Some(&wide));
     }
 
     #[test]
     fn boot_failure_clean_exit_and_unknown() {
-        assert!(boot_failure_reason(Some(1), None).contains("code 1"));
+        assert!(boot_failure_reason(Some(1), None, None).contains("code 1"));
         assert_eq!(
-            boot_failure_reason(None, None),
+            boot_failure_reason(None, None, None),
             "agent process exited during startup"
         );
     }
