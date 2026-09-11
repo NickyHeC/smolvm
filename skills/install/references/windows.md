@@ -161,6 +161,6 @@ Get-Content "$env:LOCALAPPDATA\smolvm\vms\<hash>\agent-console.log" -Tail 40
   Any `-p` costs one of those slots, so four mounts plus two ports fails while two plus two boots.
 - **Path length was not a problem** in the paths this run exercised: a volume mount from a
   237-character directory worked and nothing broke approaching 260 characters.
-- **The rest of the platform picture.** `--net` gives a real `eth0` with inbound port-forwarding,
-  and `--cuda` reaches a real NVIDIA GPU. Vulkan (`--gpu`) is accepted and silently does nothing.
-  Two of those three contradict the caveats this release ships with.
+- **The rest of the platform picture**, in the `dev-env`, `local-api` and `gpu-cuda` packets.
+  `--net` gives a real `eth0` with inbound port-forwarding, and `--cuda` reaches a real NVIDIA
+  GPU. Vulkan (`--gpu`) is accepted and silently does nothing.

@@ -277,5 +277,4 @@ the cancel path recorded and killed its VM.
 
 - `install` for the boot this assumes and the KVM group check.
 - `teardown` for the wider cleanup, and for what a leak check must exclude.
-- A machine whose state should survive between runs is the opposite of this packet, and is a
-  separate procedure.
+- `dev-env` when state should survive between runs, which is the opposite of this packet.
