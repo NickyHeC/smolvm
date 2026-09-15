@@ -5,7 +5,8 @@ description: "Stops every smolvm machine a session started, removes smolvm's sta
 
 # Leaving nothing running and nothing behind
 
-Verified on **smolvm v1.14.6** on macOS arm64 and Linux aarch64, 2026-09-10. This packet exists on its own because **almost every cleanup fact
+Verified on **smolvm v1.16.1** on macOS arm64, 2026-09-15, and on **v1.14.6** on Linux aarch64,
+2026-09-10. This packet exists on its own because **almost every cleanup fact
 in smolvm is counterintuitive**: the obvious assertion gives a false failure, the obvious reaper
 matches the wrong process or nothing at all, and the command a user reaches for when a run
 misbehaves does not stop the machine. Anything that starts machines needs this more than it needs
@@ -47,6 +48,12 @@ scripts/verify-clean.sh
 scripts/verify-clean.sh --protected "$HOME/.smolvm"   # after a run under an isolated HOME
 ```
 
+**Every check here is scoped to the `HOME` it runs under**, and the `audited_home=` line says
+which profile the result describes. Run it under a different `HOME` and it reports a clean host no
+matter what is running elsewhere: an agent that hit `machines=FAIL` did exactly that, re-ran the
+script under a fresh `mktemp -d`, got `result=clean`, and reported the host clean while a VM was
+still running.
+
 Each check prints `ok` or `FAIL expected=... actual=...`, and the script exits non-zero if any
 failed. `--protected <dir>` asserts nothing under a real installation was written today, which is
 how you show a test run under a scratch `HOME` did not reach it. Without it the check reports
@@ -67,9 +74,16 @@ deliberately leaves.
 
 Full detail with the observations behind each is in `references/traps.md`.
 
-- **`Ctrl-C` does not stop the machine, and there is no CLI route to what it leaves.** The VM
-  outlives the CLI, `machine list` says `No machines found`, and no VM cache directory exists. The
-  VM exits only when its own workload finishes, so a run that loops or hangs is unbounded exposure.
+- **`Ctrl-C` does not stop the machine. On v1.14.x there was no CLI route to what it left; on
+  v1.16.x there is.** The VM still outlives the CLI, and it still exits only when its own workload
+  finishes, so a run that loops or hangs is unbounded exposure. What changed is visibility.
+  Measured on macOS arm64 on v1.16.1, 2026-09-15: killing the **wrapper** and leaving the CLI
+  reparented to PID 1 leaves the pair running and `machine list` shows it as
+  `vm-12175b4a running (eph)`, and `smolvm machine stop --name vm-12175b4a` then stops it and both
+  processes go. Killing the **CLI** itself took the VM with it: `No machines found`, no processes.
+  **The reaper's remaining case is a VM process whose `machine list` entry is absent**, which
+  neither of those two routes produced on v1.16.1; it is now a backstop rather than the only route.
+  The transcripts recorded below are from v1.14.x, where the entry was never shown.
 - **The two obvious reapers both fail, in opposite directions.** `pgrep -f _boot-vm` matches any
   shell whose text contains that string, including the cleanup script, and reports orphans that do
   not exist. `readlink /proc/<pid>/exe` reports none that do: the VM process is not dumpable, so
@@ -136,7 +150,14 @@ Linux gave the same, with `protected=not_checked` because no real installation w
 
 **2. "Is anything still running that `smolvm machine list` cannot see?"**
 
-Run against a live machine, so this is the answer when the host is not clean. Linux:
+**The expected answer changed with v1.16.x, and the transcripts below are v1.14.x.** On v1.16.1 an
+interrupted run stays in `machine list` as `running (eph)`, so the honest answer to this question
+is now "nothing that the list cannot see; here is what it does show, and `machine stop --name`
+clears it". The reaper is still worth running, because it names the process pair and the boot
+config path, and because a process whose list entry is absent would not be found any other way.
+Re-measured on macOS arm64 on v1.16.1, 2026-09-15.
+
+Run against a live machine on v1.14.x, so this is the answer when the host is not clean. Linux:
 
 ```
 vm_process=51706 config=/home/<user>/skp/.cache/smolvm/vms/2ec3433ec42ca6de/boot-config.json

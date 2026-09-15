@@ -128,5 +128,8 @@ else
     printf 'protected=not_checked (pass --protected <dir> to assert a real install was untouched)\n'
 fi
 
+# Every check above is scoped to this HOME. Name it, so a result read later says
+# which profile it describes and cannot be mistaken for a statement about the host.
+printf 'audited_home=%s\n' "$HOME"
 if [ "$fail" -eq 0 ]; then printf 'result=clean\n'; else printf 'result=dirty\n'; fi
 exit "$fail"
