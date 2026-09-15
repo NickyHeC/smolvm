@@ -5,7 +5,8 @@ description: "Drives smolvm programmatically over its local HTTP API (smolvm ser
 
 # Driving smolvm over HTTP
 
-Verified on **smolvm v1.14.6** on macOS arm64 and Linux aarch64, 2026-09-10. Done means a machine went through
+Verified on **smolvm v1.16.1** on macOS arm64, 2026-09-15, and on **v1.14.6** on Linux aarch64,
+2026-09-10. Done means a machine went through
 its whole lifecycle over HTTP and `GET /api/v1/machines` is empty again at the end.
 
 Two rules run through everything here, and both are the same shape: **a 200 is not a result.**
@@ -107,12 +108,15 @@ base64; `exec/stream` emits one `event: stdout` per line then a terminal `event:
 
 Full detail in `references/traps.md` and `references/api-fields.md`.
 
-- **Upload after the container is up, never before.** Reproduced on Linux aarch64: the PUT
-  returned `200 {"path":"/tmp/r1.txt","size":6}` and the file was never readable, first with
+- **Upload after the container is up, never before.** Reproduced on Linux aarch64 on v1.14.6: the
+  PUT returned `200 {"path":"/tmp/r1.txt","size":6}` and the file was never readable, first with
   `failed to canonicalize target`, then with `failed to read /tmp/r1.txt in the workload
   container`. Both directions pick a namespace per request, and `/tmp` is a path the container
-  mounts over. The same sequence on macOS returned the payload, which makes this timing dependent
-  rather than safe.
+  mounts over. The same sequence on macOS returned the payload.
+  **Re-run on v1.16.1 on 2026-09-15 and it did not reproduce on either host**: a machine created
+  without a `cmd`, started, then written to immediately, read `ROUND1` back at once on macOS arm64
+  and on Lima aarch64, and again at 20 s on Linux. The rule still costs nothing and the failure was
+  silent when it happened, so keep ordering the upload after a successful `exec`.
 - **A failing guest command is HTTP 200.**
 - **Unknown create fields are accepted and ignored**, while a Smolfile rejects them. A `net` for
   `network` was caught at create here with a clear 400 about the missing network, but a `memory`
@@ -120,6 +124,11 @@ Full detail in `references/traps.md` and `references/api-fields.md`.
 - **Killing the server orphans machines.**
 - **The spec's `info.version` is not the binary's.** It says `0.5.2` on v1.14.2 while `/health`
   says `1.14.2`. Take the version from `/health`.
+- **The default listen path differs per platform, and `--help` shows only one of them.** The help
+  prints `[default: unix:///tmp/smolvm.sock]`, and its own example line says
+  `unix:///$XDG_RUNTIME_DIR/smolvm.sock`. Observed on v1.16.1: the socket appeared at
+  `/tmp/smolvm.sock` on macOS arm64 and at `/run/user/501/smolvm.sock` on Lima aarch64. Read the
+  path the server reports rather than assuming either.
 
 ## Security defaults, and why they are the defaults
 
