@@ -38,6 +38,18 @@ check device_named 'name = '
 # And the round trip, which is the only proof that bytes reached the device.
 check data_roundtrip 'roundtrip first 16 bytes match: True'
 
+# v1.16.1 answers on a host with no NVIDIA GPU with a CPU emulation device, which
+# passes both checks above. The device name is what tells them apart.
+if printf '%s' "$out" | grep -qi 'name = .*emulation'; then
+    printf 'device_kind=cpu_emulation\n'
+    printf 'result=cpu_emulation_not_gpu\n'
+    printf 'The guest reached a device and the round trip returned, but the device is\n'
+    printf 'smolvm CPU emulation, not an NVIDIA GPU. Nothing here was accelerated. Run\n'
+    printf 'scripts/preflight.sh: gpu_present=no says the same thing without starting a VM.\n'
+    exit 1
+fi
+printf 'device_kind=gpu\n'
+
 if [ "$fail" -eq 0 ]; then
     printf 'result=cuda_ok\n'
 else

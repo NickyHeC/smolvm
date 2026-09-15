@@ -10,6 +10,12 @@ kernel 6.8.0-1046-nvidia), and on the same version against an **NVIDIA GeForce R
 (driver 32.0.15.6626, Windows x86_64). Done means a program in the VM opens the device, creates a context, and moves
 data to and from it.
 
+> **Not re-run on v1.16.1, and the stamp above is deliberately unchanged.** There is no NVIDIA
+> hardware on this Mac or on the Lima box, so the GPU path keeps its v1.14.6 dates. What was
+> re-run here on 2026-09-15 on macOS arm64 is the no-GPU answer path: the preflight still reports
+> `gpu_present=no` without starting anything, and `--cuda` on a host with no GPU now reaches a CPU
+> emulation device, which is the new trap below.
+>
 > **Read this before trusting a step here.** **The Linux GPU path was re-run end to end on
 > v1.14.6**, on a rented A10 instance: the preflight, the probe against the real device with two
 > different glibc images, all three eval prompts, and the cleanup. **Windows was re-run on
@@ -39,6 +45,12 @@ Read-only: it starts no VM and touches no NVIDIA state. It reports the GPU and d
 whether your user can open `/dev/kvm`, and the host's own `libcuda` count. `result=blocked` with
 `gpu_present=no` is the answer that saves the most time, because the failure without it names
 neither CUDA nor the GPU.
+
+**If the question is "can this machine run CUDA", the preflight answers it and nothing else needs
+to run.** Do not reach for the probe to decide that: on a host with no NVIDIA GPU the probe now
+starts a VM, reaches a CPU emulation device and returns a passing round trip, which reads like a
+yes. Verified on macOS arm64 on v1.16.1: `gpu_present=no`, `unsupported=cuda,vulkan`, and the
+note `no Apple Silicon or Intel Mac has an NVIDIA GPU, so --cuda has nothing to reach here`.
 
 **2. Run the probe.**
 
@@ -94,6 +106,12 @@ full session of CUDA runs plus a Kubernetes install and teardown on the same box
 Full detail in `references/traps.md`.
 
 - **A zero exit code proves nothing.** The remoted API is why.
+- **A device name and a passing round trip no longer prove a GPU either, as of v1.16.1.** On a host
+  with no NVIDIA hardware the shim answers with a CPU emulation device: `cuInit -> 0`,
+  `cuDeviceGetCount -> 0 count = 1`, `cuDeviceGetName -> 0 name = smolvm CPU emulation device`,
+  `total MiB = 1024`, and `roundtrip first 16 bytes match: True`. **The device name is the
+  discriminator.** `scripts/run-cuda-probe.sh` now reports `device_kind=cpu_emulation` and
+  `result=cpu_emulation_not_gpu` for it instead of `result=cuda_ok`.
 - **`nvidia-smi` is absent inside the guest and that is correct.** So is `/dev/nvidia*`. Neither is
   a useful check.
 - **Use a glibc image and load the shim by absolute path.** The shim is glibc, so an Alpine guest
