@@ -5,7 +5,8 @@ description: Turns an image, or a machine already provisioned, into a single sel
 
 # Packing a machine into a portable artifact
 
-Verified on **smolvm v1.14.6** on macOS arm64 and Linux aarch64, 2026-09-11. Done means the
+Verified on **smolvm v1.16.1** on macOS arm64, 2026-09-15, and on **v1.14.6** on Linux aarch64,
+2026-09-11. Done means the
 artifact runs a command in a real VM and, for a machine pack, **the state you installed is still
 inside it**.
 
@@ -27,7 +28,10 @@ memory is **hardcoded to 8192 MiB** with no flag and no environment variable, an
 cannot give it that the export fails as `agent did not become ready within 30 seconds`, which
 mentions neither memory nor the exporter. **This preflight is the only place that failure has a
 name.** It is a warning and not a gate, because the figure is a cap rather than a reservation: see
-"What the memory line does and does not promise".
+"What the memory line does and does not promise". **On v1.16.1 it misfires more often than it
+fires**: `pack create --from-vm` now prints `Reusing the machine's cached image layers...` and on
+macOS arm64 completed in 1.2 s with `exporter_memory_ok=no` reported by the same preflight
+moments earlier, 2026-09-15.
 
 **2. Pack from an image**, when you want a runnable artifact of a stock image.
 
@@ -115,16 +119,32 @@ Full detail with the evidence in `references/traps.md`. The ones that cost the m
 
 - **`--output` names the stub, not the sidecar.** Passing `--output foo.smolmachine` fails; the
   scripts refuse it before the CLI does.
+- **"One file" needs `--single-file`, and the default is two.** By default `pack create` writes the
+  stub plus a `.smolmachine` sidecar and the CLI says `Note: Keep the .smolmachine file alongside
+  the binary`; the stub on its own prints smolvm's usage and exits. `--single-file` writes one
+  executable with no sidecar, and its own help warns it `may have issues with macOS notarization`.
+  Verified on macOS arm64 on v1.16.1: the default stub alone failed in a fresh directory and
+  printed `CARRIED` once the sidecar was beside it; the `--single-file` artifact, 59806048 bytes,
+  printed `CARRIED` alone.
 - **The stub takes a subcommand, and a bare `--` is rejected** with a tip that does not mention
   `run`. The working form is `./from-vm run -- sh -c '...'`.
 - **`pack run` takes `--sidecar <PATH>`, not a positional path**, and getting it wrong reports
   that your sidecar is not an executable in `$PATH`.
 - **Reported sizes understate the stub on disk**, by about 8.4 MB on Linux aarch64 and about
   10 MB on macOS arm64, where an extra signing step runs. The sidecar figure is accurate.
-- **A fork clone is refused at export**, by design, with a message naming both remedies: pack the
-  golden it came from, or recreate the state in a machine that was never branched.
+- **A branched machine packs on v1.16.1, and carries both states.** This was refused at export on
+  v1.14.6; #1251 closed it. Verified on macOS arm64 on 2026-09-15: start the source
+  `--branchable`, `machine branch --from <src> --name <child>`, write a marker in the child, stop
+  it, `pack create --from-vm <child>`, and the artifact prints the source's `BASE_STATE` and the
+  child's `CHILD_ONLY`. The branch must be stopped before it will pack.
+- **Branchability is decided at `machine start`, not at `create`.** `machine branch` against a
+  machine started without it refuses with `was not started as branchable, so it has no
+  copy-on-write memory to branch from ... branchability is decided at start time and cannot be
+  turned on for an already-running machine`, and `machine create --branchable` is not a flag.
 - **A checkpoint restore packs and carries its rootfs**, and the restore path is
-  `machine create --from`. There is no `machine restore` subcommand.
+  `machine create --from`. There is no `machine restore` subcommand. **Taking the checkpoint needs
+  `--branchable` on macOS**: without it v1.16.1 fails with `guest RAM has no file-backed regions`,
+  which names neither the flag nor the precondition.
 - **On Linux, `SMOLVM_DATA_DIR` moves where the agent rootfs is looked up and the installer does
   not write it there**, so an isolated data root needs the rootfs copied in before the first boot.
 

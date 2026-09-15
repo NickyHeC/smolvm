@@ -8,7 +8,7 @@
 - The exporter's 8192 MiB, and what the failure looks like
 - Verify the state, not the boot
 - Reported sizes understate the stub on disk
-- A fork clone is refused at export
+- A branched machine packs on v1.16.1, and was refused on v1.14.6
 - A checkpoint restore packs, and the restore path is not `machine restore`
 - An isolated data root on Linux does not carry the agent rootfs
 - `smolvm machine prune` needs a machine, and it starts one
@@ -103,9 +103,16 @@ The macOS gap is larger because an extra `Signing binary with hypervisor entitle
 there. The sidecar figures are accurate on both. **Do not size a disk budget or an upload from the
 reported total.**
 
-## A fork clone is refused at export
+## A branched machine packs on v1.16.1, and was refused on v1.14.6
 
-Packing a branched machine is refused, by design, and the message names both remedies:
+**#1251 closed this.** Verified on macOS arm64 on v1.16.1, 2026-09-15: a child branched from a
+source started `--branchable`, given its own marker and then stopped, packs, and the artifact
+prints the source's `BASE_STATE` and the child's `CHILD_ONLY`. A running branch is refused with
+`VM 'bchild' is running. Stop it first`. Branchability is decided at `machine start --branchable`,
+not at create.
+
+Everything below is the **v1.14.6** behaviour, kept because a host on an older release still meets
+it. Packing a branched machine was refused, by design, and the message named both remedies:
 
 ```
 machine 'child' is a fork clone of 'src'; its copy-on-write disks cannot be exported
@@ -118,6 +125,20 @@ refuses. **So a branched machine is packed through its golden.** No artifact is 
 is nothing to verify afterwards.
 
 ## A checkpoint restore packs, and the restore path is not `machine restore`
+
+**First you have to be able to take the checkpoint, and on macOS that needs `--branchable`.**
+Verified on macOS arm64 on v1.16.1, 2026-09-15: `machine checkpoint` against a machine started
+without it fails with
+
+```
+Error: agent operation failed: checkpoint machine: libkrun save failed: ERR EIO capture VM:
+VM snapshot/restore failed: retain COW guest-memory generation: guest RAM has no file-backed
+regions
+```
+
+which names neither the flag nor the precondition. Started with
+`machine start --name <n> --branchable`, the same command wrote 46 MiB in 2.554s with a 0.292s
+source pause. Branchability is decided at start and cannot be turned on afterwards.
 
 A machine restored from a checkpoint packs, runs, and carries its rootfs. This is the case
 [#1174](https://github.com/smol-machines/smolvm/pull/1174) changed, shipped in v1.14.3.
