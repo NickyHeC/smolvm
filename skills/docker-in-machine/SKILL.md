@@ -5,9 +5,9 @@ description: Runs a Docker daemon inside a smolvm machine, for workloads that mu
 
 # A Docker daemon inside a machine
 
-Verified on **smolvm v1.14.6** on Linux aarch64 and macOS arm64, 2026-09-10. Done means `docker info` succeeds
-inside the guest, a nested container runs, and Docker's data sits on the ext4 storage disk rather
-than the rootfs overlay.
+Verified on **smolvm v1.16.1** on macOS arm64, 2026-09-15, and on **v1.14.6** on Linux aarch64,
+2026-09-10. Done means `docker info` succeeds inside the guest, a nested container runs, and
+Docker's data sits on the ext4 storage disk rather than the rootfs overlay.
 
 smolvm boots OCI images without Docker. This is only for software **inside** the machine that must
 call Docker itself.
@@ -16,6 +16,26 @@ call Docker itself.
 there has neither bridge networking nor POSIX message queues, so `dockerd` will not start and,
 forced past that, containers still cannot be created. `references/windows.md` has the evidence, and
 the direct kernel probe to re-check it on a newer build.
+
+## The trap this packet exists for
+
+**`init` runs once, so the bind mounts are gone on the second boot.** The upstream example puts
+them in `init` alone, which is correct for exactly one boot. Reproduced on both hosts, and again on
+macOS arm64 on v1.16.1 on 2026-09-15:
+
+```
+Init already completed, skipping 5 command(s)
+NO_BIND_MOUNTS_AFTER_RESTART
+DOCKERD_DOWN
+```
+
+Running `scripts/start-dockerd.sh` afterwards restored everything, and `docker images` still
+listed `alpine:latest`, because the images are on `/storage`. **The failure mode is a daemon that
+will not start, or one running on the wrong filesystem, not lost data.**
+
+`smolvm machine create --help` still describes `--init` as running "on every VM start" at
+v1.14.6, which is what makes the upstream example look correct. The docs have been corrected and
+now say init runs once. More in `references/traps.md`.
 
 ## Procedure
 
@@ -87,25 +107,6 @@ Docker's nested overlay. Both mounts are needed: `/var/lib/containerd` holds the
 overlay state and fails the same way.
 
 That is why the Smolfile declares `storage = 20`, and why every check here is against `/dev/vda`.
-
-## The trap this packet exists for
-
-**`init` runs once, so the bind mounts are gone on the second boot.** The upstream example puts
-them in `init` alone, which is correct for exactly one boot. Reproduced on both hosts:
-
-```
-Init already completed, skipping 5 command(s)
-NO_BIND_MOUNTS_AFTER_RESTART
-DOCKERD_DOWN
-```
-
-Running `scripts/start-dockerd.sh` afterwards restored everything, and `docker images` still
-listed `alpine:latest`, because the images are on `/storage`. **The failure mode is a daemon that
-will not start, or one running on the wrong filesystem, not lost data.**
-
-`smolvm machine create --help` still describes `--init` as running "on every VM start" at
-v1.14.6, which is what makes the upstream example look correct. The docs have been corrected and
-now say init runs once. More in `references/traps.md`.
 
 ## The host-side socket
 
