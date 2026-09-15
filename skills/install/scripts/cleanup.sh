@@ -131,6 +131,12 @@ if printf '%s' "$listing" | grep -q 'No machines found'; then
 else
     printf 'machines=remaining\n'
     printf '%s\n' "$listing" | sed 's/^/  /'
+    # These were not created by this packet, so nothing here will remove them.
+    # Say what does, rather than leaving the reader to guess: delete prompts and
+    # defaults to No without --force, and a branched machine also needs --cascade.
+    printf 'note=this packet did not create these, so it will not delete them. By name:\n'
+    printf '  smolvm machine stop --name <NAME> && smolvm machine delete --name <NAME> --force\n'
+    printf '  add --cascade for a machine that was branched from another\n'
 fi
 
 # 4. Report VM processes an interrupt left behind. Ctrl-C does not stop a
