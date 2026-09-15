@@ -19,6 +19,11 @@ the repo is unchanged, the workload could not reach the network, and nothing is 
 
 ## Workflow
 
+**If you have no script to sandbox, make one.** A file that reads a path under `/workspace`, tries
+to create a file there, and tries to fetch a URL proves all three properties in one run, and the
+three lines it prints are the evidence. An agent with an empty directory and no fixture stopped and
+asked the user instead of building one.
+
 ```
 - [ ] 1. preflight.sh, and read result= and device_budget_ok=
 - [ ] 2. bake.sh          (offline route only; network on, nothing untrusted mounted)

@@ -3,8 +3,9 @@
 ## Contents
 
 - Why the offline shape does not work here
-- First choice: an offline persistent machine from a local image archive
-- Second choice: the network-on route, and what it costs
+- First choice: pull once, then take the network away
+- Second choice: an offline persistent machine from a local image archive
+- Third choice: the network-on route, and what it costs
 - Which of these was run
 
 ## Why the offline shape does not work here
@@ -31,11 +32,38 @@ exec, not architecture, which is why the same combination is fine on Linux.
 `scripts/preflight.sh` reports `offline_shape=unavailable` here, and `scripts/bake.sh` refuses with
 the reason rather than baking something you cannot use.
 
-## First choice: an offline persistent machine from a local image archive
+## First choice: pull once, then take the network away
 
-This keeps the property that matters, **no network on the run at all**, by supplying the image
-locally instead of caching it. `machine create` refuses a registry image without networking and its
-message names this route itself.
+Verified on macOS 26.6.2 arm64 on **v1.16.1**, 2026-09-15. It keeps the property that matters, no
+network on the run that matters, without an image archive and without `crane`:
+
+```bash
+# 1. Create with the mounts and --net. The pull does NOT happen here.
+smolvm machine create --name smolskill-box --net --image python:3.12-alpine \
+    --volume "$PWD/repo:/workspace:ro" --volume "$PWD/out:/out" -- sh -c 'while true; do sleep 3600; done'
+# 2. Start once WITH the network. This is where the image is fetched.
+smolvm machine start --name smolskill-box
+# 3. Stop, take the network away, start again.
+smolvm machine stop   --name smolskill-box
+smolvm machine update --name smolskill-box --no-net
+smolvm machine start  --name smolskill-box
+# 4. Run the untrusted command.
+smolvm machine exec --name smolskill-box -- sh -c 'python3 /workspace/calc.py > /out/result.txt'
+```
+
+Observed inside the guest at step 4: the repo file read back, `touch: /workspace/EVIL: Read-only
+file system`, and the network attempt blocked. **Disabling the network before the first start does
+not work**: the pull is at `start`, so it fails with
+`dial udp 1.1.1.1:53: connect: network is unreachable`.
+
+## Second choice: an offline persistent machine from a local image archive
+
+This supplies the image locally instead of caching it, so no network is configured at any point.
+`machine create` refuses a registry image without networking and its message names this route
+itself. **If you build the archive with `crane`, it must match the guest architecture and the
+legacy format**: `crane export` and a plain `crane pull` both produced an archive the create step
+rejected, and `crane pull --platform linux/arm64 --format legacy` was the form that worked. Two
+failed create, start and delete cycles is what getting that wrong costs.
 
 ```bash
 # 1. Supply the image from a local archive. No registry, so no network needed.
@@ -67,7 +95,7 @@ a reaper, because a persistent machine is visible to `machine list` and `machine
 writes outside the mounts leaves state behind for the next run to inherit. Delete between runs if
 the workload is untrusted rather than merely unknown.
 
-## Second choice: the network-on route, and what it costs
+## Third choice: the network-on route, and what it costs
 
 ```bash
 scripts/run.sh --route network-on --repo ./repo --out ./out -- <command>
