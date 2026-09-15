@@ -5,8 +5,9 @@ description: Installs smolvm from a published release and proves the host can ac
 
 # Installing smolvm and proving it works
 
-Verified on **smolvm v1.14.6** on macOS arm64 and Linux aarch64, 2026-09-10. Done means `smolvm --version` prints the release version **and**
-a throwaway VM has run one command and exited. A version number alone proves nothing: on every
+Verified on **smolvm v1.16.1** on macOS arm64, 2026-09-15, and on **v1.14.6** on Linux aarch64,
+2026-09-10. Done means `smolvm --version` prints the release version **and** a throwaway VM has run
+one command and exited. A version number alone proves nothing: on every
 platform here there is at least one way for the install to succeed and every VM start to fail.
 
 `scripts/preflight.sh` reports the host as `key=value` lines and ends with `result=ready` or
@@ -29,9 +30,18 @@ continues, and the path limit surfaces as an error about disks.
 **2. Install from the published release.**
 
 ```bash
-curl -sSL https://smolmachines.com/install.sh | bash -s -- --version 1.14.6
+curl -sSL https://smolmachines.com/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 smolvm --version
+```
+
+**Install the newest release.** The installer with no `--version` takes the latest published
+release, and a later release is expected to work with this packet. The version in the banner above
+is what the packet was last verified on, not what you should install. Pin only to reproduce a
+recorded run:
+
+```bash
+curl -sSL https://smolmachines.com/install.sh | bash -s -- --version 1.16.1   # a recorded run
 ```
 
 On macOS two `warning:` lines about notarization appear on every install and are not a problem.
@@ -68,7 +78,7 @@ processes an interrupt left behind, and kills them only with `--reap`.
 | key | meaning |
 |---|---|
 | `smolvm_installed`, `smolvm_version` | whether the binary is on `PATH` and what it says |
-| `verified_version`, `version_status` | `match`, `newer`, `older` or `unknown` against the 1.14.6 this packet was verified on |
+| `verified_version`, `version_status` | `match`, `newer`, `older` or `unknown` against the version this packet was last verified on. `newer` is the expected state on a current host and is not a failure |
 | `platform` | `darwin-aarch64`, `linux-aarch64`, `linux-x86_64` |
 | `accel`, `accel_access` | `hvf` and `kern.hv_support`, or `kvm` and whether `/dev/kvm` is readable and writable |
 | `macos_version`, `hardware_verified` | `hardware_verified=no` on an Intel Mac: the installer accepts it and nothing here was run on one |
