@@ -5,8 +5,9 @@ description: Keeps a persistent smolvm machine with its dependencies already ins
 
 # A persistent dev machine
 
-Verified on **smolvm v1.14.6** on Linux aarch64 and macOS arm64, 2026-09-10. Done means a second `start` is
-fast, skips provisioning, and the packages installed in the first session are still there.
+Verified on **smolvm v1.16.1** on macOS arm64, 2026-09-15, and on **v1.14.6** on Linux aarch64,
+2026-09-10. Done means a second `start` is fast, skips provisioning, and the packages installed in
+the first session are still there.
 
 The whole use case turns on one fact: **`init` runs once, not on every start.** The docs now say
 so, under their own "When init runs" heading, but `smolvm machine create --help` still reads
@@ -121,10 +122,15 @@ Full detail in `references/traps.md`. The three that cost the most:
   own help output. The docs have been corrected and now say once. Anything that must be true on
   every boot, a bind mount above all, has to run in the command that needs it.
 - **`exec` right after `start` can answer with a message rather than running.** If you see
-  ``the container `smolvm-<hash>` is not running``, the workload container is being relaunched.
-  Without a command, `create` uses the image's own CMD as the persistent workload, and for an
-  interpreter image that exits at once. Measured on a nested-virt aarch64 host: 1 exec in 20 failed
-  that way with no command, 0 in 20 with an explicit long-lived one.
+  ``the container `smolvm-<hash>` is not running``, **check first whether the machine has a
+  workload at all**: without a command, `create` uses the image's own CMD as the persistent
+  workload, and for an interpreter image that exits at once, so there is no container to exec into
+  and waiting will not help. Only when a long-lived workload is configured is this a readiness
+  race, and then a short retry loop is the fix. Measured on a nested-virt aarch64 host on v1.14.6:
+  1 exec in 20 failed that way with no command, 0 in 20 with an explicit long-lived one.
+  **Re-measured on v1.16.1 on 2026-09-15 and it did not reproduce**: 0 of 20 with no command and
+  0 of 20 with one, on macOS arm64 and on Lima aarch64 alike. Treat it as fixed until you see the
+  message, and give a machine you intend to `exec` into a long-lived workload anyway.
 - **`machine shell` does not start a stopped machine**, despite its own help text saying it does.
 
 Two smaller ones: `create` is instant and proves nothing, because every failure lands on the first
