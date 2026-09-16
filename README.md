@@ -28,9 +28,11 @@ curl -sSL https://smolmachines.com/install.sh | bash
 curl -sSL https://smolmachines.com/install.sh | bash && smolvm --help
 ```
 
-Or download from [GitHub Releases](https://github.com/smol-machines/smolvm/releases), and place it into `~/.local/share/`.
+Or download from [GitHub Releases](https://github.com/smol-machines/smolvm/releases). The installer puts the binary in `~/.smolvm` and a launcher in `~/.local/bin`, which is the directory to use for a manual install too.
 
 **Windows:** download the `windows-x86_64` release (bundles `krun.dll` + `libkrunfw.dll`), unzip it, and run `smolvm.exe`. Requires the [Windows Hypervisor Platform](https://learn.microsoft.com/en-us/virtualization/api/) (WHP) feature enabled.
+
+The documentation for humans and agents is in [`docs/`](docs/README.md): one folder per task, each with the facts, and where a procedure exists, a `SKILL.md` an agent can run. Installing, proving the host boots a VM, and removing every trace are [docs/install](docs/install/README.md) and [docs/teardown](docs/teardown/README.md).
 
 Quick Start
 -----------
