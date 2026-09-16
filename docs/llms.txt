@@ -1,1 +1,2 @@
 docs/install/SKILL.md
+docs/teardown/SKILL.md
