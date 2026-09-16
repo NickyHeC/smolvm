@@ -1,5 +1,9 @@
 # Fork-pool benchmark harness
 
+> **Tooling, not documentation.** The scripts here are a harness a contributor runs; `RESULTS.md`
+> beside them is a log of one earlier run. The current documentation is in
+> [`docs/`](../docs/README.md).
+
 Measures the same post-training workload two ways on one GPU, so claims about
 smolvm's fork pool can be checked rather than believed:
 

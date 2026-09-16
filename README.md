@@ -182,7 +182,7 @@ Anyone can then pull it and boot the exact same machine:
 smolvm pack pull ghcr.io/you/myvm:v1
 ```
 
-Working Smolfiles: [python](https://github.com/smol-machines/smolvm/tree/main/examples/python-app) · [node](https://github.com/smol-machines/smolvm/tree/main/examples/node-app) · [docker-in-vm](https://github.com/smol-machines/smolvm/tree/main/examples/docker-in-vm) · [local-llm](https://github.com/smol-machines/smolvm/tree/main/examples/local-llm) · [headless-browser](https://github.com/smol-machines/smolvm/tree/main/examples/headless-browser) · [doom](https://github.com/smol-machines/smolvm/tree/main/examples/doom-web)
+Working Smolfiles: [python](docs/dev-env/assets/python.smolfile) · [node](docs/dev-env/assets/node.smolfile) · [docker](docs/docker-in-machine/assets/docker.smolfile) · [local-llm](docs/smolfile/examples/local-llm.smolfile) · [headless-browser](docs/headless-browser/assets/browser.smolfile) · [doom](docs/smolfile/examples/doom.smolfile). The format is documented once, in [docs/smolfile](docs/smolfile/README.md).
 
 Use This For
 ------------
@@ -339,101 +339,36 @@ Known Limitations
 Kubernetes
 ----------
 
-smolvm ships a **containerd shim v2**, so Kubernetes runs a pod as its own microVM
-through a `RuntimeClass`, the same integration point Kata uses. The Linux release
-carries the shim and the manifests; there is nothing to build.
+smolvm ships a **containerd shim v2**, so Kubernetes runs a pod as its own microVM through a
+`RuntimeClass`, the same integration point Kata uses. The Linux release carries the shim and the
+manifests; there is nothing to build.
 
-On each node that should run microVM pods (requires KVM):
-
-```bash
-# 1. install the shim + runtime artifacts, then apply the containerd config it prints
-sudo ./kubernetes/install-k8s-runtime.sh
-sudo systemctl restart containerd
-
-# 2. label the node so the RuntimeClass will schedule to it
-kubectl label node <node> smolvm-runtime=true
-```
-
-Then register the class and run a pod:
-
-```bash
-kubectl apply -f kubernetes/runtimeclass.yaml
-kubectl apply -f kubernetes/example-pod.yaml
-kubectl logs smolvm-hello    # prints the guest's own kernel, so it is a real VM
-```
-
-Any pod opts in with `runtimeClassName: smolvm`.
+The node install with the correct paths, the configuration the stock shim needs, and the
+conformance numbers are in [docs/kubernetes](docs/kubernetes/README.md).
 
 GPU Acceleration
 ----------------
 
-smolvm exposes the host GPU to guests via **virtio-gpu / Venus** (Vulkan-over-virtio). Guest workloads see a real Vulkan device; on Linux + Intel this renders as:
+smolvm exposes the host GPU to guests via **virtio-gpu / Venus** (Vulkan-over-virtio), with `--gpu`
+on `machine run` or `machine create`. Host requirements per platform, why the guest needs no ICD
+path set, and what has and has not worked on the hosts tested are in
+[docs/gpu-vulkan](docs/gpu-vulkan/README.md).
 
-```
-ANGLE (Intel, Vulkan 1.4 (Virtio-GPU Venus (Intel(R) UHD Graphics ...)), venus)
-```
-
-### Host requirements
-
-**macOS**: virglrenderer and MoltenVK are bundled in the smolvm distribution. No extra installs needed.
-
-**Linux**: virglrenderer and a host Vulkan driver must be installed from the system package manager:
-
-| Distro | Packages |
-|--------|----------|
-| Alpine | `apk add virglrenderer mesa-vulkan-intel` (or `mesa-vulkan-ati` for AMD) |
-| Debian/Ubuntu | `apt install virglrenderer0 mesa-vulkan-drivers` |
-| Nix / NixOS | the flake does not put virglrenderer on the loader path; export `LD_LIBRARY_PATH` with the nixpkgs `virglrenderer` and `libepoxy` lib dirs (and `/run/opengl-driver/lib` on NixOS), see the [GPU page](https://smolmachines.com/docs/introduction/concepts/gpu) |
-
-> virglrenderer depends on libEGL and libdrm from the host GPU driver stack. These are hardware-specific and cannot be bundled. Any GPU-capable Linux host will already have them installed via its GPU driver.
-
-### Usage
-
-```bash
-# CLI
-smolvm machine run --net --gpu --image alpine -- sh -c '
-  apk add --no-cache mesa-vulkan-virtio vulkan-loader vulkan-tools
-  vulkaninfo --summary | grep deviceName
-'
-# → deviceName = Virtio-GPU Venus (Apple M1 Pro)
-
-# Smolfile
-# gpu = true
-# gpu_vram = 2048   # MiB, default 4096
-```
-
-Nothing needs to set `VK_ICD_FILENAMES`: the guest's Mesa installs an ICD
-manifest the Vulkan loader finds on its own, and on a glibc image smolvm also
-bind-mounts its own Venus driver and points the loader at it. Set the variable
-only to override that choice — and note the manifest name carries the
-architecture (`virtio_icd.x86_64.json` / `virtio_icd.aarch64.json`), so a
-hardcoded path is wrong on the other arch.
-
-### Headless browser example
-
-See [`examples/headless-browser/`](examples/headless-browser/) for a working Chromium setup using ANGLE + Venus for hardware-accelerated WebGL inside a headless VM.
+CUDA is a separate feature, below.
 
 CUDA API Remoting
 -----------------
 
-`--gpu` and `--cuda` provide different interfaces. `--gpu` exposes Vulkan through virtio-gpu / Venus; it does not provide CUDA. `--cuda` enables CUDA API remoting: driverless guest shims forward CUDA calls over vsock to a host process, which executes them through the host's NVIDIA driver.
-
-CUDA remoting requires an NVIDIA GPU and a working NVIDIA driver on the host. It is not GPU passthrough: the guest receives neither the physical device nor an NVIDIA driver.
-
-Fork-heavy Linux hosts should use a kernel containing upstream KVM fix
-[`916b7f4`](https://github.com/torvalds/linux/commit/916b7f42b3b3b539a71c204a9b49fdc4ca92cd82).
-Affected kernels can intermittently report `ENOMEM` on the first `KVM_RUN` even
-with ample host memory; smolvm reduces exposure and replaces a failed worker,
-but the kernel update is the definitive fix.
-
-The VM boundary still isolates the workload's CPU, memory, and filesystem. GPU access is mediated by host processes and the shared host GPU, so GPU isolation remains process-level rather than a hardware or VM boundary. Do not treat CUDA remoting as a hardened multi-tenant GPU isolation boundary.
-
-See [GPU access by API remoting: how a driverless microVM runs CUDA](https://smolmachines.com/engineering/gpu-over-vsock) for the design, trade-offs, and comparison with passthrough.
+`--cuda` remotes the guest's CUDA Driver API calls to the host's NVIDIA GPU over vsock. It is not
+GPU passthrough: the guest receives neither the physical device nor an NVIDIA driver, and no CUDA
+toolkit is needed on either side. What is covered, what an exit code does not prove, and how to
+tell a real device from the CPU emulation device v1.16.1 and later answer with on a GPU-less host are in
+[docs/gpu-cuda](docs/gpu-cuda/README.md).
 
 Development
 -----------
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+See [docs/contributing/DEVELOPMENT.md](docs/contributing/DEVELOPMENT.md).
 
 Documentation
 -------------

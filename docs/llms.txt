@@ -1,0 +1,5 @@
+docs/dev-env/SKILL.md
+docs/local-api/SKILL.md
+docs/docker-in-machine/SKILL.md
+docs/gpu-cuda/SKILL.md
+docs/pack/SKILL.md

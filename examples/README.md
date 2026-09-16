@@ -6,18 +6,18 @@ A Smolfile is the declarative source of truth for a microVM workload. It describ
 
 ```bash
 # Run the OpenClaw gateway from a Smolfile
-smolvm machine run -d -s examples/openclaw-app/openclaw.smolfile
+smolvm machine run -d -s docs/smolfile/examples/openclaw.smolfile
 curl http://localhost:18789/health
 
 # Run a Python dev environment
-smolvm machine run -s examples/python-app/python.smolfile
+smolvm machine run -s docs/dev-env/assets/python.smolfile
 
 # Run Doom in a browser
-smolvm machine run -d -s examples/doom-web/doom.smolfile
+smolvm machine run -d -s docs/smolfile/examples/doom.smolfile
 open http://localhost:8080
 
 # Headless Chromium with GPU acceleration
-smolvm machine create --name browser -s examples/headless-browser/browser.smolfile
+smolvm machine create --name browser -s docs/headless-browser/assets/browser.smolfile
 smolvm machine start --name browser
 smolvm machine exec --name browser -- \
   chromium --headless=new --no-sandbox --disable-dev-shm-usage \
@@ -30,7 +30,7 @@ smolvm machine exec --name browser -- base64 /tmp/out.png | base64 -d > out.png
 ### Persistent microVMs
 
 ```bash
-smolvm machine create --name dev -s examples/python-app/python.smolfile
+smolvm machine create --name dev -s docs/dev-env/assets/python.smolfile
 smolvm machine start --name dev
 smolvm machine exec --name dev -- python3 --version
 smolvm machine stop --name dev
@@ -39,7 +39,7 @@ smolvm machine stop --name dev
 ### Pack a distributable binary
 
 ```bash
-smolvm pack create -s examples/openclaw-app/openclaw.smolfile -o openclaw-packed
+smolvm pack create -s docs/smolfile/examples/openclaw.smolfile -o openclaw-packed
 ./openclaw-packed
 ```
 

@@ -84,7 +84,7 @@ smolvm machine create --name myvm --image ./myapp.tar     # persistent, from a l
 - **`machine exec`** — persistent. Filesystem changes (package installs, config edits) persist across exec sessions for the same machine, whether bare or image-based. Changes are stored in an overlay on the machine's storage disk.
 - **`machine stop` + `start`** — changes persist across restarts. The persistent overlay is remounted preserving previous changes.
 - **`pack run`** — ephemeral. Each run starts fresh from the packed image.
-- **`pack start` + `exec`** — daemon mode. `/workspace` persists across exec sessions and stop/start. Container overlay resets per exec (package installs don't persist — use `/workspace` for durable data).
+- **the packed artifact's own `start` + `exec`** (there is no `smolvm pack start` subcommand): daemon mode. `/workspace` persists across exec sessions and stop/start. Container overlay resets per exec, so package installs do not persist; use `/workspace` for durable data.
 - **`machine create --from .smolmachine`** — creates a persistent named machine from a packed artifact. Boots from pre-extracted layers (~250ms, no image pull). Full `machine exec` persistence — package installs, file writes all survive across exec and stop/start.
 - **Memory-backed paths** — `/tmp`, `/run`, and `/dev/shm` are tmpfs regardless of the mode above. They keep their contents while the machine runs, including across `exec` sessions, but are empty again after a stop and start. `/workspace` and the rest of the machine filesystem are on the storage disk, so write anything that must outlive a restart there — including credentials and configuration, which should not sit in `/tmp` or behind a symlink into it.
 
@@ -180,77 +180,8 @@ rejected with a hint to build first (`docker build … && docker save … | … 
 
 ## Smolfile Reference
 
-A Smolfile is a TOML file declaring a VM workload. Use with `--smolfile`/`-s`.
-
-```toml
-# Top-level: workload definition
-image = "python:3.12-alpine"          # OCI image (omit for bare Alpine)
-entrypoint = ["/app/run"]             # overrides image ENTRYPOINT
-cmd = ["serve"]                       # overrides image CMD
-env = ["PORT=8080", "DEBUG=1"]        # environment variables
-workdir = "/app"                      # working directory
-
-# Resources
-cpus = 2                              # vCPUs (default: 4)
-memory = 1024                         # MiB (default: 8192, elastic via balloon)
-net = true                            # outbound networking (default: false)
-gpu = true                            # GPU acceleration (default: false)
-gpu_vram = 4096                       # GPU VRAM MiB (default: 4096, ignored unless gpu=true)
-storage = 40                          # storage disk GiB (default: 20)
-overlay = 4                           # overlay disk GiB (default: 2)
-
-# Network policy — egress filtering by hostname and/or CIDR
-[network]
-allow_hosts = ["api.stripe.com"]      # resolved at VM start (implies net)
-allow_cidrs = ["10.0.0.0/8"]         # IP/CIDR ranges (implies net)
-
-# Dev profile (used by `machine run` and `machine create`)
-[dev]
-volumes = ["./src:/app"]              # host bind mounts
-ports = ["8080:8080"]                 # port forwarding
-init = ["pip install -r requirements.txt"]  # run on every VM start
-env = ["APP_MODE=dev"]                # dev-only env (extends top-level)
-workdir = "/app"                      # dev-only workdir
-
-# Artifact profile (used by `pack create`)
-[artifact]
-cpus = 4                              # override resources for distribution
-memory = 2048
-entrypoint = ["/app/run"]             # override entrypoint for packed binary
-oci_platform = "linux/amd64"          # target OCI platform
-
-# Health check (used by `machine monitor`)
-[health]
-exec = ["curl", "-f", "http://127.0.0.1:8080/health"]
-interval = "10s"
-timeout = "2s"
-retries = 3
-startup_grace = "20s"
-
-# Credential forwarding
-[auth]
-ssh_agent = true                      # forward host SSH agent into the VM
-
-# Secrets — references to host sources, resolved at workload launch
-[secrets]
-DATABASE_URL   = { from_env   = "PROD_DB_URL" }      # host env var (at launch)
-GCP_CREDS      = { from_file  = "/abs/creds.json" }  # host file (at launch)
-```
-
-### Merge Precedence
-
-CLI flags override Smolfile values:
-
-```
-image:      --image flag > Smolfile image > None (bare Alpine)
-entrypoint: Smolfile entrypoint > image metadata
-cmd:        trailing args (after --) > Smolfile cmd > image metadata
-env:        top-level env + [dev].env + CLI -e (all merged)
-volumes:    [dev].volumes + CLI -v (all merged)
-ports:      [dev].ports + CLI -p (all merged)
-init:       [dev].init + CLI --init (all merged)
-cpus/mem:   CLI flag > Smolfile > defaults (4 CPU, 8192 MiB)
-```
+The one Smolfile reference is `docs/smolfile/README.md`: every key, the tables and the merge
+precedence. Pass a file with `-s` to `machine create` or `machine run`.
 
 ## Networking
 
@@ -320,87 +251,17 @@ Requires `SSH_AUTH_SOCK` to be set on the host. If missing, smolvm exits with an
 
 ## GPU Acceleration
 
-Enable the host GPU inside a VM with `--gpu`. Guest Vulkan talks to the host GPU via virtio-gpu/Venus; ANGLE uses it as the WebGL/OpenGL ES backend.
-
-Not available on Windows (WHP) — `--gpu` has no effect there.
-
-**Host setup:**
-- macOS — bundled, no extra installs needed.
-- Linux — install virglrenderer from the system package manager before use:
-  - Alpine: `apk add virglrenderer mesa-vulkan-intel` (or `mesa-vulkan-ati` for AMD)
-  - Debian/Ubuntu: `apt install virglrenderer0 mesa-vulkan-drivers`
-
-```bash
-# One-shot GPU workload
-smolvm machine run --net --gpu --image alpine -- sh -c '
-  apk add --no-cache mesa-vulkan-virtio vulkan-loader vulkan-tools
-  vulkaninfo --summary 2>/dev/null | grep deviceName
-'
-# → deviceName = Virtio-GPU Venus (Intel(R) UHD Graphics ...)
-
-# Persistent GPU machine
-smolvm machine create --name browser --gpu --gpu-vram 2048
-smolvm machine start --name browser
-smolvm machine exec --name browser -- \
-  chromium --headless=new --no-sandbox --use-gl=angle --use-angle=vulkan \
-    --screenshot=/tmp/out.png --window-size=1280,800 https://example.com
-```
-
-The guest does not need `VK_ICD_FILENAMES`: Mesa's ICD manifest is where the
-Vulkan loader already looks, and on a glibc image smolvm bind-mounts its own
-Venus driver and pins the loader to it. Setting the variable overrides that
-pin, and the manifest name is architecture-specific
-(`virtio_icd.x86_64.json` / `virtio_icd.aarch64.json`), so a hardcoded path
-breaks on the other arch:
-
-```toml
-gpu = true
-gpu_vram = 2048
-```
-
-For a complete working example see [`examples/headless-browser/browser.smolfile`](examples/headless-browser/browser.smolfile).
+Vulkan over virtio-gpu and Venus, its host requirements per distribution, and why the guest needs
+no ICD path set: `docs/gpu-vulkan/README.md`. It reached a Venus device on macOS arm64 on v1.18.2,
+and the page says what was and was not run.
 
 ## CUDA (experimental)
 
-`--cuda` remotes guest CUDA **Driver-API** calls to the host NVIDIA GPU over
-vsock — separate from `--gpu` (Vulkan graphics). The host needs a working
-NVIDIA driver (`libcuda.so.1` + loaded kernel module); no CUDA toolkit is
-required on host or guest. Enable with `--cuda` on `machine run`/`create`, or
-`cuda = true` in a Smolfile.
+`--cuda` remotes guest CUDA Driver API calls to the host NVIDIA GPU over vsock, a different
+feature from `--gpu`: `docs/gpu-cuda/README.md`, with the procedure in its `SKILL.md`. On a host
+with no NVIDIA hardware v1.16.1 and later answer with a CPU emulation device, so assert the device
+name.
 
-Guest programs reach the GPU through the drop-in driver library built from
-[`crates/smolvm-cuda-shim`](crates/smolvm-cuda-shim) (a `cdylib` with soname
-`libcuda.so.1`). Mount or install it in the guest and unmodified Driver-API
-programs work with no code changes:
-
-```bash
-cargo build --release -p smolvm-cuda-shim   # → target/release/libcuda.so
-mkdir -p /tmp/shim && cp target/release/libcuda.so /tmp/shim/libcuda.so.1
-
-smolvm machine run --net --cuda -v /tmp/shim:/opt/shim:ro --image debian:bookworm-slim -- \
-  sh -c 'gcc myapp.c -o myapp -L/opt/shim -l:libcuda.so.1 && LD_LIBRARY_PATH=/opt/shim ./myapp'
-```
-
-Covered surface: init/device queries (name, attributes, uuid, total/free mem),
-contexts (incl. the primary-context flow the CUDA runtime uses), module
-load/unload (PTX, cubin, fatbin), mem alloc/free/HtoD/DtoH/DtoD/memset,
-kernel launch (param sizes come from the host via `cuFuncGetParamInfo`,
-CUDA 12.4+ drivers), streams, events, `cuGetProcAddress`. All work executes
-synchronously host-side; `*Async` calls complete before returning (permitted
-by the CUDA contract).
-
-**This covers programs written against the Driver API (the `cu*` C API), not
-the Runtime API.** A program built with `nvcc` (or PyTorch, RAPIDS, etc.) links
-NVIDIA's `libcudart`, which bootstraps by requesting a *private* internal
-driver interface via `cuGetExportTable` (a versioned UUID whose function ABIs
-are undocumented). A pure `libcuda` shim cannot provide it, so `libcudart`
-aborts during context init. Hosting Runtime-API workloads therefore requires
-remoting at the `libcudart` level instead — a separate, larger effort (see
-`docs/cuda-support-plan.md`, Phase 4). Set `SMOLVM_CUDA_SHIM_TRACE=1` to log
-which driver entry points a program resolves through the shim.
-
-Without an NVIDIA driver the host serves a CPU-emulation backend (test-only:
-it knows the `vecadd` test kernel), so the transport stays testable anywhere.
 ## Secrets
 
 smolvm stores no secret material. A secret is a *reference* to a value that
