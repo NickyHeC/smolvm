@@ -55,7 +55,7 @@ from a chain at the limit.
 ## History
 
 Every checkpoint records its *lineage*: a unique id, the machine it came from,
-and its **parent** — the checkpoint that machine was last captured to or
+and its **parent**, the checkpoint that machine was last captured to or
 restored from. Repeated captures of one machine form a chain; restoring a
 checkpoint and capturing again forms a branch. A machine remembers its current
 position (`checkpoint_head`); `machine branch` children inherit it.
