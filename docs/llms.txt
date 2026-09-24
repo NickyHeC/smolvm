@@ -3,3 +3,4 @@ docs/local-api/SKILL.md
 docs/docker-in-machine/SKILL.md
 docs/gpu-cuda/SKILL.md
 docs/pack/SKILL.md
+docs/branch-and-checkpoint/SKILL.md

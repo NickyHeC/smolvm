@@ -21,7 +21,7 @@ npx skills add smol-machines/smolvm --skill <topic>
 | [gpu-cuda](gpu-cuda/README.md) | CUDA Driver API calls remoted to the host NVIDIA GPU | [SKILL.md](gpu-cuda/SKILL.md) |
 | [pack](pack/README.md) | packing an image or a machine into a portable artifact | [SKILL.md](pack/SKILL.md) |
 | [gpu-vulkan](gpu-vulkan/README.md) | Vulkan over virtio-gpu, and why it has no procedure yet | |
-| [branch-and-checkpoint](branch-and-checkpoint/README.md) | live forks and restorable checkpoints | |
+| [branch-and-checkpoint](branch-and-checkpoint/README.md) | scheduled checkpoints with history, restores, pause and resume, and branches with their branch point kept | [SKILL.md](branch-and-checkpoint/SKILL.md) |
 | [kubernetes](kubernetes/README.md) | a pod as its own microVM through the containerd shim | |
 | [headless-browser](headless-browser/README.md) | headless Chromium, and pre-warmed browser pools | |
 | [smolfile](smolfile/README.md) | the Smolfile format, the one reference | |
