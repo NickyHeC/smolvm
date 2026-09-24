@@ -1,6 +1,8 @@
 # Credential substitution
 
-Give a workload a credential it can use but never read. The guest receives an
+Give a workload a credential it can use but never read. `SKILL.md` is the agent
+procedure, with scripts that prove on your own host that the value stays out of
+the machine. The guest receives an
 opaque placeholder in the environment variable it expects; the host replaces
 the placeholder with the real value only on HTTPS requests to the hosts you
 allow, and only inside a request header. The value never enters the machine,
@@ -18,8 +20,8 @@ smolvm machine exec --name notes -- sh -c \
 # {"object":"user", …}                <- Notion received the real key
 ```
 
-The same placeholder sent anywhere else — another host, a query string, a
-request body — is refused or travels as the literal placeholder string.
+The same placeholder sent anywhere else, to another host or in a query string
+or a request body, is refused or travels as the literal placeholder string.
 
 ## Declaring bindings
 
@@ -55,8 +57,8 @@ API (`POST /v1/machines`): the same object under `credentials`, with
 
 Rules checked at create:
 
-- `allowed_hosts` are exact lowercase DNS names — no wildcards, IPs, schemes or
-  ports — and the list must be non-empty. A credential is never sent anywhere
+- `allowed_hosts` are exact lowercase DNS names, with no wildcards, IPs, schemes
+  or ports, and the list must be non-empty. A credential is never sent anywhere
   by default.
 - When the machine also has `allow_hosts`, every credential host must fall
   under it. Widening the machine's network never widens a credential, and a
@@ -74,6 +76,13 @@ needs no restart, and nothing is cached across requests.
 2. Otherwise, the host environment variable of that name at `machine start`
    and `machine exec` time. This is the `dotenvx run -- smolvm machine start …`
    path: decrypted values live only in the host process.
+
+   Measured on v1.18.2: the value used is the one in the environment of the
+   `machine start` that launched the machine, since the interceptor runs in that
+   process. Unsetting the variable for a later `machine exec` did not stop
+   substitution, and starting the machine with it unset gave the `502` below. So
+   a value from the host environment rotates with a restart, and one that must
+   rotate in place belongs in a file reference.
 
 ```toml
 [secrets]
@@ -110,7 +119,7 @@ the destination. The interceptor reads the TLS server name:
 
 - **A host some binding allows**: TLS is terminated with a certificate issued
   by the machine CA, the request is parsed as HTTP/1.1, and the placeholder is
-  replaced in place — the guest supplies `Bearer `, `Basic `, or any other
+  replaced in place: the guest supplies `Bearer `, `Basic `, or any other
   surrounding syntax, and only the placeholder changes. The request is then
   sent to the destination address the guest resolved, over a fresh TLS
   connection verified for that host. Responses stream back, including
@@ -128,7 +137,7 @@ Refused with a `403` and a one-line reason in the body:
   this host or method (`405`).
 
 `502 smolvm credentials: credential unavailable` means the host could not
-resolve the binding — the variable is unset, the file is missing or
+resolve the binding: the variable is unset, the file is missing or
 unreadable, or the value has control characters. Details are in the machine's
 host log, never in the response.
 

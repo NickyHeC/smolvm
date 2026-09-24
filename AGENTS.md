@@ -264,6 +264,9 @@ name.
 
 ## Secrets
 
+To let a workload use an API key it can never read, bind the key to the hosts it may be sent to
+with `--credential`; the guest gets a placeholder: `docs/credentials/README.md`.
+
 smolvm stores no secret material. A secret is a *reference* to a value that
 already lives on the host — a host environment variable or a host file — and is
 resolved into the workload's process environment at launch time. Bring your own
