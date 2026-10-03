@@ -1,4 +1,5 @@
 docs/branch-and-checkpoint/SKILL.md
+docs/credentials/SKILL.md
 docs/dev-env/SKILL.md
 docs/docker-in-machine/SKILL.md
 docs/gpu-cuda/SKILL.md
