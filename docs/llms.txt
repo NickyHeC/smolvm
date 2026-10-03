@@ -3,4 +3,5 @@ docs/docker-in-machine/SKILL.md
 docs/gpu-cuda/SKILL.md
 docs/install/SKILL.md
 docs/local-api/SKILL.md
+docs/pack/SKILL.md
 docs/teardown/SKILL.md
