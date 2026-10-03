@@ -12,6 +12,23 @@ A tool to build and run portable, self-contained virtual machines locally. <200m
 
 Windows caveats: branches require `--freeze-source`, checkpoint capture rejects active virtiofs DAX mappings, and GPU acceleration is unavailable. `pack create` needs `storage-template.ext4` / `overlay-template.ext4` beside `smolvm.exe` (Windows has no host `mkfs.ext4`). Set `SMOLVM_LIB_DIR` (folder holding `krun.dll` + `libkrunfw.dll`) and `SMOLVM_AGENT_ROOTFS` when running from a non-standard layout.
 
+## Documentation
+
+`docs/README.md` in the repository is the index
+(https://github.com/smol-machines/smolvm/tree/main/docs). The flat pages there (`branching.md`,
+`smolfile.md`, `security-model.md` and the rest) are the reference for each feature. Each folder
+under `docs/` is a task: a `README.md` with the facts and why they hold, and a `SKILL.md` an agent
+follows, with its own `scripts/`, `references/` and `assets/`. A topic links to the reference page
+it builds on rather than repeating it. Version stamps and per-platform results live in the
+`SKILL.md`.
+
+`docs/llms.txt` lists every `SKILL.md` path. A topic installs into an agent's own skills directory
+with:
+
+```bash
+npx skills add smol-machines/smolvm --skill <topic>
+```
+
 ## Quick Reference
 
 ```bash
