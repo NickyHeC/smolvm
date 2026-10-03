@@ -1,4 +1,5 @@
 docs/dev-env/SKILL.md
+docs/docker-in-machine/SKILL.md
 docs/install/SKILL.md
 docs/local-api/SKILL.md
 docs/teardown/SKILL.md
