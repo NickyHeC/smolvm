@@ -34,7 +34,7 @@ API ENDPOINTS:
   DELETE /api/v1/machines/:id         Delete machine
 
 EXAMPLES:
-  smolvm serve start                                Listen on the default Unix socket (unix:///$XDG_RUNTIME_DIR/smolvm.sock)
+  smolvm serve start                                Listen on the default address (shown under --listen)
   smolvm serve start -l 0.0.0.0:9000                Listen on all interfaces, port 9000
   smolvm serve start -l unix:///tmp/smol.sock       Listen on a Unix domain socket
   smolvm serve start -v                             Enable verbose logging")]
