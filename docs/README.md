@@ -10,6 +10,21 @@ directory.
 
 `llms.txt` lists every packet's `SKILL.md` for agents that read the tree directly.
 
+## Start here
+
+Find the task, then run its packet's first step: a read-only check that ends in `result=ready`
+(`result=clean` for teardown) when this host can do the task. Call each script by its path in this
+directory, from a working directory of your own. Each first step ran as written on v1.23.1 on
+macOS arm64.
+
+| Task | Packet | First step |
+|---|---|---|
+| Install smolvm and prove a VM boots | [install](install/SKILL.md) | `install/scripts/preflight.sh` |
+| Run code you do not trust, with no network | [throwaway-machine](throwaway-machine/SKILL.md) | `throwaway-machine/scripts/preflight.sh --mounts 2 --ports 0` |
+| Keep a machine you come back to | [dev-env](dev-env/SKILL.md) | `dev-env/scripts/preflight.sh` |
+| Give a workload an API key it never reads | [credentials](credentials/SKILL.md) | `credentials/scripts/preflight.sh --var <HOST_ENV_VAR> --host <api.example.com>` |
+| Leave nothing running | [teardown](teardown/SKILL.md) | `teardown/scripts/verify-clean.sh` |
+
 ## Skill packets
 
 | Packet | What it covers | Procedure |

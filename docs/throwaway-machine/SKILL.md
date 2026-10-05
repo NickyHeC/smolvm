@@ -131,6 +131,19 @@ scripts/cleanup.sh --cancel --purge   # to stop a run that is still going
 up to 20 seconds, polling, before asserting an empty machine list, and says so, because the ephemeral entry retires
 after the run returns and an immediate assertion fails on a healthy host.
 
+## Looking around by hand
+
+To inspect the repo interactively under the same isolation, open a shell in a throwaway machine
+with the repo read-only and no network:
+
+```bash
+smolvm machine run -it --image alpine -v "$PWD/repo:/workspace:ro" -- /bin/sh
+```
+
+`exit` ends the shell and the machine. On v1.23.1 on macOS arm64, inside it `cat` read the repo,
+`touch /workspace/x` gave `Read-only file system` and `wget` gave `bad address 'example.com'`; after
+`exit`, `machine list` printed `No machines found` and no smolvm process was left.
+
 ## Cancelling, and why Ctrl-C is not it
 
 On v1.20.2, Ctrl-C or `SIGKILL` on the CLI itself ends the VM within a second on both routes, on

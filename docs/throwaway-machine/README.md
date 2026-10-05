@@ -17,6 +17,26 @@ boundary.
 | Pack | prebuilds dependencies into a portable artifact | the same job repeated on compatible hosts |
 | Branch | starts children from a running machine's memory and disk, copy-on-write ([branching](../branching.md)) | many short workers from one warm state |
 
+## The image decides the C library and the tools
+
+Read from each image on v1.23.1 on macOS arm64 with
+
+```bash
+smolvm machine run --image <image> -- sh -c 'ldd --version 2>&1 | head -1; for c in apk apt-get python3 pytest; do command -v $c; done'
+```
+
+| Image | C library | Package manager | `python3` | `pytest` |
+|---|---|---|---|---|
+| `alpine` | musl | `apk` | no | no |
+| `python:3.12-alpine` | musl | `apk` | yes | no |
+| `python:3.12-slim` | glibc 2.41 (Debian) | `apt-get` | yes | no |
+| `debian:bookworm-slim` | glibc 2.36 | `apt-get` | no | no |
+| `ubuntu:24.04` | glibc 2.39 | `apt-get` | no | no |
+
+None of them has `pytest`. `smolvm machine run --image python:3.12-slim -- pytest` exits 255 with
+``executable file `pytest` not found in $PATH``, so a test command installs its runner first, which
+needs the network for that step.
+
 ## The network is off unless you ask for it
 
 `--net` enables outbound access; without it the guest has none. Where a registry image is pulled
@@ -92,6 +112,16 @@ A mount deliberately exposes a host directory to guest code, as the
 [security model](../security-model.md) says of every forwarded capability. Mount the repository
 read-only and give generated output its own writable directory, so a test that writes into its
 source tree fails loudly instead of editing yours.
+
+Never mount `/`, `$HOME` or `~/.ssh` into a machine running untrusted code. Read-only does not
+protect a secret: on v1.23.1 a guest given `-v "$HOME/.ssh:/mnt/ssh:ro"` listed the key files and
+printed `-----BEGIN OPENSSH PRIVATE KEY-----` from the private one (a dummy key in a scratch
+`HOME`).
+
+Leave `--ssh-agent` off unless the work needs your SSH identity. The key stays on the host, but any
+process in the guest can ask the agent to sign with it: with a dummy key loaded,
+`smolvm machine run --net --ssh-agent --image alpine -- sh -c 'apk add -q openssh-client && ssh-add -l'`
+listed its fingerprint from inside the guest.
 
 ## Stopping a run is not Ctrl-C
 

@@ -118,6 +118,21 @@ scripts/cleanup.sh --purge
 `cleanup.sh` waits up to 20 seconds, polling the machine list, and prints `waiting=up to 20s`
 first: an ephemeral machine's entry retires after its run returns.
 
+## When the workload has to read the value
+
+A binding keeps the value out of the guest, which is what this packet is for. When the workload
+itself has to hold the key, `--secret-env` puts it in the workload's environment instead, resolved
+from a host variable when the machine launches:
+
+```bash
+smolvm machine run --image alpine --secret-env API_TOKEN=API_TOKEN -- sh -c 'test -n "$API_TOKEN" && echo set'
+```
+
+On v1.23.1 on macOS arm64, with a dummy value in `API_TOKEN`, that printed `set`. With the host
+variable unset the run stopped before the workload with `Error: config operation failed: resolve
+secret 'API_TOKEN': env_unset`. The value is plaintext in the guest, where any process can read it
+and send it anywhere the network allows; that is why the binding is the default here.
+
 ## Traps
 
 Full detail in `references/traps.md`.
