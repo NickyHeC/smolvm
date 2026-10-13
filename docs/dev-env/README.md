@@ -2,8 +2,8 @@
 
 A named machine keeps its disk across stop and start, so the packages you installed in the first
 session are there in the second. That is the whole use case, and it turns on one fact: **`init`
-runs once, not on every start**, as [`smolfile.md`](../smolfile.md) says. `machine create --help`
-describes `--init` as running on every start.
+runs once, not on every start**, as [`smolfile.md`](../smolfile.md) says, and as
+`machine create --help` says from v1.23.7; before that release the help said every start.
 
 `SKILL.md` is the procedure. `assets/dev.smolfile` is a working starting point, and
 [`examples/python-app/python.smolfile`](../../examples/python-app/python.smolfile) and
@@ -23,13 +23,13 @@ machine runs, including across `exec` sessions, and are empty again after a stop
 anything that must outlive a restart to `/workspace` or elsewhere on the storage disk, including
 credentials and configuration, which should not sit in `/tmp` or behind a symlink into it.
 
-On v1.22.2 the storage disk defaulted to 20 GiB and the rootfs overlay to 10 GiB, as `machine list`
-showed; `AGENTS.md` gives 2 GiB for the overlay. Both are sparse, so they cost what they hold.
+The storage disk defaults to 20 GiB and the rootfs overlay to 10 GiB, as `machine list` showed on
+v1.22.2 and on v1.27.3. Both are sparse, so they cost what they hold.
 
 ## `init` runs once
 
 A Smolfile's `init` is provisioning: it runs on the first start of a machine and is skipped on
-every start after that. `smolvm machine create --help` describes it as running on every VM start;
-provisioning that relies on that reading is missing on the second boot. Anything
+every start after that. Before v1.23.7 `smolvm machine create --help` described it as running on
+every VM start; provisioning that relies on that reading is missing on the second boot. Anything
 that must be true on every boot, a bind mount above all, belongs in the command the machine runs,
 not in `init`.
