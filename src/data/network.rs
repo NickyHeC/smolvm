@@ -8,29 +8,65 @@ pub const FALLBACK_DNS: &str = "1.1.1.1";
 /// Fallback DNS server as `IpAddr`.
 pub const FALLBACK_DNS_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1));
 
-/// Detect the host's primary DNS server from /etc/resolv.conf.
+/// Detect the host's primary DNS server, skipping loopback (a local stub such as
+/// systemd-resolved or dnsmasq is not reachable from inside the VM).
 /// Falls back to Cloudflare (1.1.1.1) if detection fails.
 pub fn host_dns() -> IpAddr {
-    host_dns_from_resolv("/etc/resolv.conf").unwrap_or(FALLBACK_DNS_ADDR)
+    host_nameservers()
+        .into_iter()
+        .find(|ip| !ip.is_loopback())
+        .unwrap_or(FALLBACK_DNS_ADDR)
 }
 
-/// Parse the first nameserver from a resolv.conf file.
-fn host_dns_from_resolv(path: &str) -> Option<IpAddr> {
-    let contents = std::fs::read_to_string(path).ok()?;
-    for line in contents.lines() {
-        let line = line.trim();
-        if let Some(addr_str) = line.strip_prefix("nameserver") {
-            let addr_str = addr_str.trim();
-            // Skip loopback — it's typically a local resolver (systemd-resolved,
-            // dnsmasq) that isn't reachable from inside the VM.
-            if let Ok(ip) = addr_str.parse::<IpAddr>() {
-                if !ip.is_loopback() {
-                    return Some(ip);
-                }
-            }
-        }
+/// Where [`host_nameservers`] reads the host's resolver list.
+#[cfg(not(windows))]
+const HOST_RESOLVERS: &str = "/etc/resolv.conf";
+#[cfg(windows)]
+const HOST_RESOLVERS: &str = "GetNetworkParams";
+
+/// The host's nameservers in order, from [`HOST_RESOLVERS`].
+#[cfg(not(windows))]
+fn host_nameservers() -> Vec<IpAddr> {
+    resolv_conf_nameservers(&std::fs::read_to_string(HOST_RESOLVERS).unwrap_or_default())
+}
+
+/// The host's nameservers in order: the system's IPv4 resolver list, which is
+/// what Windows has in place of `/etc/resolv.conf`.
+#[cfg(windows)]
+fn host_nameservers() -> Vec<IpAddr> {
+    use windows_sys::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS};
+    use windows_sys::Win32::NetworkManagement::IpHelper::{GetNetworkParams, FIXED_INFO_W2KSP1};
+
+    let mut len = 0u32;
+    // SAFETY: a null buffer with a zero length only asks for the size needed.
+    let rc = unsafe { GetNetworkParams(std::ptr::null_mut(), &mut len) };
+    if rc != ERROR_BUFFER_OVERFLOW {
+        tracing::debug!(rc, "GetNetworkParams size query failed");
+        return Vec::new();
     }
-    None
+    // u64 words keep the buffer aligned for the pointers inside FIXED_INFO.
+    let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+    let info = buf.as_mut_ptr().cast::<FIXED_INFO_W2KSP1>();
+    // SAFETY: `buf` is at least `len` bytes and aligned for FIXED_INFO.
+    let rc = unsafe { GetNetworkParams(info, &mut len) };
+    if rc != ERROR_SUCCESS {
+        tracing::debug!(rc, "GetNetworkParams failed");
+        return Vec::new();
+    }
+    // SAFETY: the list's nodes live inside `buf`, which outlives the walk.
+    let head = unsafe { &(*info).DnsServerList };
+    std::iter::successors(Some(head), |entry| unsafe { entry.Next.as_ref() })
+        // An empty head entry (no resolver configured) does not parse and is skipped.
+        .filter_map(|entry| {
+            let text = entry.IpAddress.String.map(|c| c as u8);
+            std::ffi::CStr::from_bytes_until_nul(&text)
+                .ok()?
+                .to_str()
+                .ok()?
+                .parse()
+                .ok()
+        })
+        .collect()
 }
 
 /// Default DNS as string — prefers host's resolver, falls back to 1.1.1.1.
@@ -87,36 +123,39 @@ pub fn effective_dns(
     dns_override: Option<Ipv4Addr>,
     backend: crate::network::EffectiveNetworkBackend,
 ) -> EffectiveDns {
-    let resolv_conf = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
-    let uplink = std::fs::read_to_string(SYSTEMD_RESOLVED_UPLINK).unwrap_or_default();
+    let host = host_nameservers();
+    let uplink = resolv_conf_nameservers(
+        &std::fs::read_to_string(SYSTEMD_RESOLVED_UPLINK).unwrap_or_default(),
+    );
     // A TSI guest dials its resolver itself, so the egress floor applies to it:
     // on a cloud VM the host resolver is the metadata address, and under the
     // strict floor a CGNAT resolver (Tailscale's 100.100.100.100) is blocked too.
     let floor = smolvm_network::EgressPolicy::unrestricted();
-    let effective = select_dns(dns_override, backend, &resolv_conf, &uplink, &|addr| {
+    let effective = select_dns(dns_override, backend, &host, &uplink, &|addr| {
         floor.allows_v4(addr)
     });
     if effective.source == DnsSource::BackendDefault
         && backend != crate::network::EffectiveNetworkBackend::None
     {
-        // Names the one case operators hit and cannot otherwise see: a host whose
-        // only nameservers are IPv6, which `--dns <IP>` (an `Ipv4Addr`) cannot express.
-        tracing::debug!(
-            "no IPv4 host resolver this backend can reach; guest keeps the public resolvers"
+        // A network that blocks the public resolvers then fails every lookup in
+        // the guest, so say what was read and how to choose one.
+        tracing::warn!(
+            looked_at = HOST_RESOLVERS,
+            "no IPv4 host resolver this backend can reach; guest keeps the public resolvers, pass --dns to choose one"
         );
     }
     effective
 }
 
-/// The pure half of [`effective_dns`], with both files supplied. `reachable`
+/// The pure half of [`effective_dns`], with both resolver lists supplied. `reachable`
 /// says whether a TSI guest may connect to an address; a host resolver it may
 /// not reach is skipped, and with none left the guest keeps the public
 /// resolvers.
 fn select_dns(
     dns_override: Option<Ipv4Addr>,
     backend: crate::network::EffectiveNetworkBackend,
-    resolv_conf: &str,
-    systemd_uplink: &str,
+    host: &[IpAddr],
+    systemd_uplink: &[IpAddr],
     reachable: &dyn Fn(Ipv4Addr) -> bool,
 ) -> EffectiveDns {
     use crate::network::EffectiveNetworkBackend;
@@ -131,16 +170,16 @@ fn select_dns(
         EffectiveNetworkBackend::None => None,
         // The gateway forwards guest queries from a host UDP socket, so a host
         // loopback stub is reachable and is taken as-is.
-        EffectiveNetworkBackend::VirtioNet => nameservers_v4(resolv_conf)
+        EffectiveNetworkBackend::VirtioNet => v4(host)
             .next()
             .map(|addr| (addr, DnsSource::HostResolvConf)),
         // TSI does not translate a guest loopback destination to the host's
         // loopback, so a stub address would leave the guest talking to itself.
-        EffectiveNetworkBackend::Tsi => nameservers_v4(resolv_conf)
+        EffectiveNetworkBackend::Tsi => v4(host)
             .find(|addr| !addr.is_loopback() && reachable(*addr))
             .map(|addr| (addr, DnsSource::HostResolvConf))
             .or_else(|| {
-                nameservers_v4(systemd_uplink)
+                v4(systemd_uplink)
                     .find(|addr| !addr.is_loopback() && reachable(*addr))
                     .map(|addr| (addr, DnsSource::SystemdUplink))
             }),
@@ -157,18 +196,22 @@ fn select_dns(
     }
 }
 
-/// Every IPv4 nameserver in a resolv.conf, in file order.
+/// Every nameserver in a resolv.conf, in file order.
+fn resolv_conf_nameservers(contents: &str) -> Vec<IpAddr> {
+    contents
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("nameserver")?.trim().parse().ok())
+        .collect()
+}
+
+/// The IPv4 entries of a resolver list, in order.
 ///
 /// IPv6 entries are skipped: the resolver is carried as an `Ipv4Addr` all the
 /// way to `--dns` and the virtio gateway's upstream.
-fn nameservers_v4(contents: &str) -> impl Iterator<Item = Ipv4Addr> + '_ {
-    contents.lines().filter_map(|line| {
-        let line = line.trim();
-        let addr = line.strip_prefix("nameserver")?.trim();
-        match addr.parse::<IpAddr>().ok()? {
-            IpAddr::V4(v4) => Some(v4),
-            IpAddr::V6(_) => None,
-        }
+fn v4(addrs: &[IpAddr]) -> impl Iterator<Item = Ipv4Addr> + '_ {
+    addrs.iter().filter_map(|addr| match addr {
+        IpAddr::V4(v4) => Some(*v4),
+        IpAddr::V6(_) => None,
     })
 }
 
@@ -429,6 +472,40 @@ mod tests {
     const CAMPUS: &str = "nameserver 128.112.128.12\nnameserver 128.112.128.79\n";
     const STUB: &str = "nameserver 127.0.0.53\noptions edns0 trust-ad\n";
     const UPLINK: &str = "nameserver 192.168.5.2\nsearch mynetworksettings.com\n";
+
+    /// [`super::select_dns`] over resolv.conf text, as a Unix host supplies it.
+    fn select_dns(
+        dns_override: Option<Ipv4Addr>,
+        backend: EffectiveNetworkBackend,
+        resolv_conf: &str,
+        systemd_uplink: &str,
+        reachable: &dyn Fn(Ipv4Addr) -> bool,
+    ) -> EffectiveDns {
+        let host = resolv_conf_nameservers(resolv_conf);
+        let uplink = resolv_conf_nameservers(systemd_uplink);
+        super::select_dns(dns_override, backend, &host, &uplink, reachable)
+    }
+
+    #[test]
+    fn a_host_resolver_list_from_the_platform_is_selected_like_resolv_conf() {
+        // Windows hands over addresses, not file text: the same list must pick
+        // the same resolver.
+        let corp = Ipv4Addr::new(10, 20, 0, 53);
+        let list = [
+            "fec0:0:0:ffff::1".parse().unwrap(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V4(corp),
+        ];
+        let text = "nameserver fec0:0:0:ffff::1\nnameserver 127.0.0.1\nnameserver 10.20.0.53\n";
+        for (backend, picked) in [
+            (EffectiveNetworkBackend::Tsi, corp),
+            (EffectiveNetworkBackend::VirtioNet, Ipv4Addr::LOCALHOST),
+        ] {
+            let chosen = super::select_dns(None, backend, &list, &[], &|_| true);
+            assert_eq!(chosen.addr, Some(picked));
+            assert_eq!(chosen, select_dns(None, backend, text, "", &|_| true));
+        }
+    }
 
     #[test]
     fn explicit_dns_wins_on_both_backends() {

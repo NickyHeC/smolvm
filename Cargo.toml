@@ -133,7 +133,8 @@ landlock = "0.4"
 
 # Windows process management (OpenProcess / TerminateProcess / Wait) and
 # DLL-search-path control (SetDllDirectoryW). Used to replace the Unix
-# kill/waitpid/dlopen primitives on the Windows host build.
+# kill/waitpid/dlopen primitives on the Windows host build. IpHelper reads the
+# host's DNS servers (GetNetworkParams), which Windows keeps in place of resolv.conf.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = [
     "Win32_Foundation",
@@ -144,6 +145,7 @@ windows-sys = { version = "0.60", features = [
     "Win32_System_IO",
     "Win32_Storage_FileSystem",
     "Win32_Networking_WinSock",
+    "Win32_NetworkManagement_IpHelper",
 ] }
 
 [dev-dependencies]
