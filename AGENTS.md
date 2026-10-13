@@ -14,8 +14,9 @@ Windows caveats: branches require `--freeze-source`, checkpoint capture rejects 
 
 ## Documentation
 
-Skill packets, tested procedures an agent can follow with their scripts, are indexed in
-`docs/README.md` (https://github.com/smol-machines/smolvm/tree/main/docs).
+Skill packets, tested procedures an agent can follow with their scripts, and the reference page
+for each feature are indexed in `docs/README.md`
+(https://github.com/smol-machines/smolvm/tree/main/docs).
 
 ## Quick Reference
 

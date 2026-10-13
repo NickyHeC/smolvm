@@ -27,6 +27,8 @@ curl -sSL https://smolmachines.com/install.sh | bash   # macOS + Linux
 
 Windows: unzip the `windows-x86_64` [release](https://github.com/smol-machines/smolvm/releases) and run `smolvm.exe` (needs the [Windows Hypervisor Platform](https://learn.microsoft.com/en-us/virtualization/api/)). Coding agents: run `smolvm --help` after installing to discover every command.
 
+The documentation for humans and agents is in [`docs/`](docs/README.md), one folder per task: a `README.md` with the facts and a `SKILL.md` an agent can follow, with its scripts, beside the reference page for each feature.
+
 Quick Start
 -----------
 
