@@ -13,12 +13,16 @@ runs once, not on every start**, as [`smolfile.md`](../smolfile.md) says, and as
 
 | Mode | Persistence |
 |---|---|
-| `machine run` | ephemeral, every change discarded when the command exits |
-| `machine exec` | changes persist across exec sessions, in an overlay on the machine's storage disk |
+| `machine run` | ephemeral, every change discarded when the command exits, unless `-d` leaves it running as a named machine that `exec` and `stop` act on |
+| `machine exec` | changes (package installs, config edits) persist across exec sessions, bare or image-based, in an overlay on the machine's storage disk |
 | `machine stop` then `start` | changes persist; the overlay is remounted |
-| `machine create --from <artifact>.smolmachine` | a persistent machine from a packed artifact, boots from pre-extracted layers with no image pull |
+| `machine create --stop-on-exit` (Smolfile `stop_on_exit = true`) | the machine stops by itself when its workload exits, whatever the exit status, with storage flushed as for `machine stop`; `exec` sessions never trigger it, the restart policy then applies (the default, `never`, leaves it stopped), and the exit status is not passed on |
+| `pack run` | ephemeral, each run starts fresh from the packed image |
+| `pack start` then `exec` | daemon mode: package installs and file writes persist across exec sessions, and `/workspace` across a stop and start too |
+| `machine create --from <artifact>.smolmachine` | a persistent named machine from a packed artifact, booting from pre-extracted layers (about 250 ms, no image pull), with full `exec` persistence |
 
-`/tmp`, `/run` and `/dev/shm` are tmpfs whatever the mode. They keep their contents while the
+`/tmp`, `/run` and `/dev/shm` are tmpfs whatever the mode, except that `machine run --unprivileged`
+keeps only `/dev/shm`. They keep their contents while the
 machine runs, including across `exec` sessions, and are empty again after a stop and start. Write
 anything that must outlive a restart to `/workspace` or elsewhere on the storage disk, including
 credentials and configuration, which should not sit in `/tmp` or behind a symlink into it.
