@@ -172,19 +172,19 @@ rejected with a hint to build first (`docker build … && docker save … | … 
 |------|-------|---------|-------------|
 | `--image` | `-I` | run, create, pack create | OCI image, or a local source: a Docker-save/OCI archive (`./img.tar`, or `-` for stdin) or unpacked rootfs dir (`./rootfs/`) |
 | `--name` | `-n` | run, start, stop, status, exec, update | Machine name (default: "default"); `exec` takes only the long form |
-| `--net` | | run, create | Enable outbound networking (off by default) |
-| `--gpu` | | run, create | Enable GPU acceleration (Vulkan via virtio-gpu) |
+| `--net` | | run, create, update, pack run | Enable outbound networking (off by default) |
+| `--gpu` | | run, create, update, pack create | Enable GPU acceleration (Vulkan via virtio-gpu) |
 | `--gpu-vram` | | run, create | GPU shared-memory region size in MiB (default: 4096). Ignored without `--gpu`. |
-| `--volume` | `-v` | run, create, update | Mount host dir: `HOST:GUEST[:ro]` |
+| `--volume` | `-v` | run, create, update, pack run | Mount host dir: `HOST:GUEST[:ro]` |
 | `--allow-system-mounts` | | run, create, update, pack run | Permit trusted read-only `/etc` and `/var/log` mounts below `/host` |
-| `--port` | `-p` | run, create, update | Port mapping: `HOST:GUEST` |
+| `--port` | `-p` | run, create, update, pack run | Port mapping: `HOST:GUEST` |
 | `--smolfile` | `-s` | run, create, pack create | Load config from Smolfile |
-| `--interactive` | `-i` | run, exec | Keep stdin open |
-| `--tty` | `-t` | run, exec | Allocate pseudo-TTY |
-| `--allow-cidr` | | run, create | CIDR egress filter (implies --net) |
-| `--allow-host` | | run, create | Hostname egress filter, resolved at VM start (implies --net) |
-| `--allow-host-pattern` | | run, create | Opt-in exact hostname or `*.domain` subdomains (implies --net) |
-| `--ssh-agent` | | run, create | Forward host SSH agent (git/ssh without exposing keys) |
+| `--interactive` | `-i` | run, exec, pack run | Keep stdin open |
+| `--tty` | `-t` | run, exec, pack run | Allocate pseudo-TTY |
+| `--allow-cidr` | | run, create, update | CIDR egress filter (implies --net) |
+| `--allow-host` | | run, create, update | Hostname egress filter, resolved at VM start (implies --net) |
+| `--allow-host-pattern` | | run, create, update | Opt-in exact hostname or `*.domain` subdomains (implies --net) |
+| `--ssh-agent` | | run, create, pack run | Forward host SSH agent (git/ssh without exposing keys) |
 | `--nested` | | run, create | Let the guest run its own VMs (nested KVM). Off by default; it exposes the host kernel's nested-KVM code to the guest, so enable it only for trusted workloads. Over the HTTP API it is `nestedVirt`, refused with 403 unless the server runs `smolvm serve start --allow-nested-virt`. |
 | `--stop-on-exit` | | create | Stop the machine when its workload exits, whatever the exit status |
 
@@ -394,18 +394,12 @@ NVIDIA driver (`libcuda.so.1` + loaded kernel module); no CUDA toolkit is
 required on host or guest. Enable with `--cuda` on `machine run`/`create`, or
 `cuda = true` in a Smolfile.
 
-Guest programs reach the GPU through the drop-in driver library built from
-[`crates/smolvm-cuda-shim`](crates/smolvm-cuda-shim) (a `cdylib` with soname
-`libcuda.so.1`). Mount or install it in the guest and unmodified Driver-API
-programs work with no code changes:
-
-```bash
-cargo build --release -p smolvm-cuda-shim   # → target/release/libcuda.so
-mkdir -p /tmp/shim && cp target/release/libcuda.so /tmp/shim/libcuda.so.1
-
-smolvm machine run --net --cuda -v /tmp/shim:/opt/shim:ro --image debian:bookworm-slim -- \
-  sh -c 'gcc myapp.c -o myapp -L/opt/shim -l:libcuda.so.1 && LD_LIBRARY_PATH=/opt/shim ./myapp'
-```
+Guest programs reach the GPU through drop-in libraries the release's agent
+rootfs bundles. With `--cuda` the guest agent bind-mounts them read-only at
+`/opt/smolvm-cuda` in the workload container and appends that directory to
+`LD_LIBRARY_PATH`, so `libcuda.so.1` resolves to the driver shim built from
+[`crates/smolvm-cuda-shim`](crates/smolvm-cuda-shim) and unmodified Driver-API
+programs work with no code changes. The shim is glibc, so use a glibc image.
 
 Covered surface: init/device queries (name, attributes, uuid, total/free mem),
 contexts (incl. the primary-context flow the CUDA runtime uses), module
@@ -415,15 +409,17 @@ CUDA 12.4+ drivers), streams, events, `cuGetProcAddress`. All work executes
 synchronously host-side; `*Async` calls complete before returning (permitted
 by the CUDA contract).
 
-**This covers programs written against the Driver API (the `cu*` C API), not
-the Runtime API.** A program built with `nvcc` (or PyTorch, RAPIDS, etc.) links
-NVIDIA's `libcudart`, which bootstraps by requesting a *private* internal
-driver interface via `cuGetExportTable` (a versioned UUID whose function ABIs
-are undocumented). A pure `libcuda` shim cannot provide it, so `libcudart`
-aborts during context init. Hosting Runtime-API workloads therefore requires
-remoting at the `libcudart` level instead — a separate, larger effort (see
-`docs/cuda-support-plan.md`, Phase 4). Set `SMOLVM_CUDA_SHIM_TRACE=1` to log
-which driver entry points a program resolves through the shim.
+**The Runtime API goes through a second shim.** NVIDIA's own `libcudart`
+bootstraps through a private driver interface (`cuGetExportTable`) that a
+`libcuda` shim cannot provide, so
+[`crates/smolvm-cudart-shim`](crates/smolvm-cudart-shim) replaces `libcudart`
+instead: it lowers each Runtime-API call to the public Driver API and remotes
+that. The bundled copy sits in the same directory under the `libcudart`,
+`libcublas`, `libcublasLt` and `libcudnn` sonames of CUDA 11, 12 and 13, and
+is bind-mounted over those libraries where a pip wheel installed them under
+`site-packages/nvidia/`, since programs such as PyTorch find them by RPATH
+ahead of `LD_LIBRARY_PATH`. Set `SMOLVM_CUDA_SHIM_TRACE=1` to log which
+driver entry points a program resolves through the shim.
 
 Without an NVIDIA driver the host serves a CPU-emulation backend (test-only:
 it knows the `vecadd` test kernel), so the transport stays testable anywhere.
