@@ -123,12 +123,13 @@ process in the guest can ask the agent to sign with it: with a dummy key loaded,
 `smolvm machine run --net --ssh-agent --image alpine -- sh -c 'apk add -q openssh-client && ssh-add -l'`
 listed its fingerprint from inside the guest.
 
-## Stopping a run is not Ctrl-C
+## Stopping a run
 
-From v1.20.2 interrupting the CLI ends its VM. Interrupting a script that runs the CLI in the
-background, as the packet's own `run.sh` does, or the CLI of a cached run on an older release, can
-leave the VM alive with its workload still running. The packet's `scripts/cleanup.sh --cancel` is
-the cancel; `SKILL.md` and `references/traps.md` carry the measurements and what each host does.
+From v1.20.2 interrupting the CLI ends its VM, and the packet's `run.sh` forwards Ctrl-C and
+`SIGTERM` to the CLI it runs in the background. A script that backgrounds the CLI without
+forwarding, or the CLI of a cached run on an older release, can leave the VM alive with its
+workload still running; the packet's `scripts/cleanup.sh --cancel` is the cancel there. `SKILL.md`
+and `references/traps.md` carry the measurements and what each host does.
 
 ## Platforms
 
