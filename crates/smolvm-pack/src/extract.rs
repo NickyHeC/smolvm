@@ -90,8 +90,9 @@ pub(crate) fn lock_file_exclusive(lock_file: &fs::File) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Set a Unix file mode on `path`, ignoring errors. No-op on non-Unix targets
-/// (Windows has no POSIX mode bits).
+/// Set a Unix file mode on `path`, ignoring errors. Windows has no POSIX mode
+/// bits, so there only the owner-write bit applies, as the read-only attribute
+/// tar sets on an entry archived without it.
 #[inline]
 fn set_mode(path: &Path, mode: u32) {
     #[cfg(unix)]
@@ -100,7 +101,11 @@ fn set_mode(path: &Path, mode: u32) {
     }
     #[cfg(not(unix))]
     {
-        let _ = (path, mode);
+        if let Ok(meta) = std::fs::metadata(path) {
+            let mut perms = meta.permissions();
+            perms.set_readonly(mode & 0o200 == 0);
+            let _ = std::fs::set_permissions(path, perms);
+        }
     }
 }
 
@@ -7349,7 +7354,8 @@ mod tests {
     /// and its owner record still has to land on the directory. On Windows the
     /// record is an alternate data stream, and `...\etc/:name` is not a valid
     /// stream path: every layer holding a directory failed to extract with
-    /// os error 123, so no packed image could run.
+    /// os error 123, so no packed image could run. A stream is also refused on
+    /// a read-only entry (os error 5), which every image's `0555` `proc/` is.
     #[test]
     fn owner_xattr_extraction_records_owners_of_directory_entries() {
         let root = tempfile::tempdir().unwrap();
@@ -7372,6 +7378,8 @@ mod tests {
         add("etc/", tar::EntryType::Directory, 0o755, 0, b"");
         add("etc/nested/", tar::EntryType::Directory, 0o755, 0, b"");
         add("etc/nested/conf", tar::EntryType::Regular, 0o644, 0, b"c");
+        add("proc/", tar::EntryType::Directory, 0o555, 0, b"");
+        add("etc/readonly", tar::EntryType::Regular, 0o444, 0, b"r");
         let tar_bytes = builder.into_inner().unwrap();
 
         let dest = root.path().join("layer");
@@ -7392,6 +7400,8 @@ mod tests {
         assert_eq!(xattr("etc").as_deref(), Some("0:0:0755"));
         assert_eq!(xattr("etc/nested").as_deref(), Some("0:0:0755"));
         assert_eq!(xattr("etc/nested/conf").as_deref(), Some("0:0:0644"));
+        assert_eq!(xattr("proc").as_deref(), Some("0:0:0555"));
+        assert_eq!(xattr("etc/readonly").as_deref(), Some("0:0:0444"));
         assert_eq!(fs::read(dest.join("private/secret")).unwrap(), b"s");
     }
 
