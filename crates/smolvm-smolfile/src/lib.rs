@@ -31,7 +31,7 @@
 //! | `overlay` | int | No | Overlay disk size in GiB. |
 //! | `ports` | string[] | No | Port mappings (`"host:guest"` or equal-length `"host-start-host-end:guest-start-guest-end"` ranges). Prefer `[dev] ports`. |
 //! | `volumes` | string[] | No | Volume mounts (`"host:guest[:ro|rw|staged]"`). Prefer `[dev] volumes`. |
-//! | `init` | string[] | No | Commands run on every VM start. Prefer `[dev] init`. |
+//! | `init` | string[] | No | Commands run once, on the machine's first start. Prefer `[dev] init`. |
 //!
 //! ## Sections
 //!
@@ -248,7 +248,7 @@ pub enum SmolfileError {
 ///
 /// - `entrypoint`: the executable and its fixed leading arguments (like Dockerfile ENTRYPOINT)
 /// - `cmd`: default arguments appended to entrypoint (like Dockerfile CMD)
-/// - `init`: dev bootstrap commands run on every VM start (like RUN at boot, NOT like CMD)
+/// - `init`: dev bootstrap commands run once, on the machine's first start (like RUN at boot, NOT like CMD)
 ///
 /// When set, `entrypoint` and `cmd` override the base image's OCI config values.
 /// If neither is set, the image's built-in entrypoint and cmd are used.
@@ -328,7 +328,7 @@ pub struct Smolfile {
     /// Volume mounts (e.g., `["./src:/app"]`).
     #[serde(default)]
     pub volumes: Vec<String>,
-    /// Init commands run on every VM start.
+    /// Init commands run once, on the machine's first start.
     #[serde(default)]
     pub init: Vec<String>,
 
@@ -447,7 +447,7 @@ pub struct DevConfig {
     /// Development-only environment variables.
     #[serde(default)]
     pub env: Vec<String>,
-    /// Init commands run on every VM start.
+    /// Init commands run once, on the machine's first start.
     #[serde(default)]
     pub init: Vec<String>,
     /// Development working directory override.

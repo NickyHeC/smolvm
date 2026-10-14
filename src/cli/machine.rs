@@ -860,7 +860,7 @@ pub struct RunCmd {
     pub secret_file: Vec<String>,
 
     /// Run command before the workload (can be used multiple times); the same
-    /// as `init` in a Smolfile, and the CLI form wins when both are given.
+    /// as `init` in a Smolfile, which the CLI form extends when both are given.
     /// Init provisions the machine, so it runs as root regardless of `--user`
     /// or the image's USER.
     #[arg(long = "init", value_name = "COMMAND")]
