@@ -256,7 +256,7 @@ env = [
 ]
 ```
 
-Proxy vars are NOT forwarded automatically — each VM gets exactly the env you specify, unless you ask for the host's (below). The VM uses the host's DNS server (from `/etc/resolv.conf`) for name resolution.
+Proxy vars are NOT forwarded automatically: each VM gets exactly the env you specify, unless you ask for the host's (below). The guest uses the host's own resolver: the first `/etc/resolv.conf` nameserver, systemd-resolved's uplink when that file names only the local stub, or the Windows system resolver list; `--dns` sets a custom DNS resolver for the guest instead.
 
 ### Behind a corporate firewall
 
