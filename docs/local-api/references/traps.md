@@ -123,3 +123,10 @@ Those have their own page: `references/api-fields.md`. The short version is that
 are refused with `422` from v1.22.2 and were accepted with 200 and ignored before it, `network`
 and `memoryMb` are not `net` and `memory`, and the version in the exported spec is not the
 binary's.
+
+## Corrections
+
+- **2026-10-15, v1.29.0 run.** No v1.28.2 was released: `--guest-rollout-port` first ships in
+  v1.29.0. With it, a second `serve start --listen 127.0.0.1:8898 --guest-rollout-port 10091`
+  answered `/health` while the first held 10081; without it the second failed with
+  `bind guest rollout ingress: 127.0.0.1:10081: Address already in use (os error 48)`.

@@ -50,12 +50,11 @@ Hint: networking is disabled. Add --net to enable image pulls:
 ```
 
 From v1.22.0 a run first builds a shared seed of the image in a helper machine of its own, and the
-workload's machine then starts from it with no network. On macOS arm64 on v1.22.2,
-`smolvm machine run --image busybox` with no `--net` pulled the image and the workload's `wget`
-printed `bad address 'example.com'`. The output above is Linux aarch64 on the same release, on a
-host where that helper could not boot and the run fell back to pulling in the guest. `machine run`
-is unchanged on v1.23.0: on macOS arm64 it printed the same `bad address`, and with
-`SMOLVM_IMAGE_SEEDS=0` it stopped at the pull with the hint above.
+workload's machine then starts from it with no network: on macOS arm64 on v1.22.2, v1.23.0 and
+v1.29.0, `smolvm machine run --image busybox` with no `--net` pulled the image and the workload's
+`wget` printed `bad address 'example.com'`. The output above is Linux aarch64 on v1.22.2, where the
+helper could not boot and the run fell back to pulling in the guest; on macOS
+`SMOLVM_IMAGE_SEEDS=0` stops at the pull with the same hint.
 
 **A persistent machine is where v1.23.0 differs.** Through v1.22.2 `machine create` with a registry
 image and no network is refused up front. From v1.23.0
@@ -78,7 +77,8 @@ The machine persists until deleted, so it does not have the throwaway property.
 
 Before v1.23.0, to run a workload with no network at all, fetch the image once with the network on,
 then take it away before the run that matters (`references/macos.md`, first choice). The
-`--oci-cache` flag serves the same purpose on a host that runs the same image repeatedly.
+`--oci-cache` flag serves the same purpose on a host that runs the same image repeatedly, except on
+macOS from v1.24.0 ([#1819](https://github.com/smol-machines/smolvm/issues/1819)).
 
 ## Grant egress one host at a time
 
@@ -88,8 +88,16 @@ subdomains without the apex. `--allow-cidr <CIDR>` permits an address range. All
 `--net`, and can be combined and used more than once. `--net` alone opens full outbound TCP, UDP and
 DNS, and `--outbound-localhost-only` limits egress to `127.0.0.0/8` and `::1`, also implying `--net`.
 In a Smolfile, `[network] allow_host_patterns` takes the exact and wildcard forms and `allow_hosts`
-the `--allow-host` one. `machine run` has no deny-list flag: a job that needs broad access needs
-host or fleet controls as well.
+the `--allow-host` one. There is no per-host deny-list flag, and `--block-private` denies private
+ranges only: a job that needs broad access needs host or fleet controls as well.
+
+From v1.28.1, `--block-private` blocks private, internal and link-local destinations (the LAN,
+cloud metadata, CGNAT, the host's loopback) while the public internet stays open, and implies
+`--net`. `--allow-private <CIDR>` re-opens one private range under it, such as an internal registry,
+and can be used more than once. In a Smolfile they are `[network] block_private = true` and
+`allow_private = ["10.20.0.0/16"]`. On macOS arm64 on v1.29.0, a web server on the host's LAN
+address was reachable with `--net`, blocked with `--block-private`, and reachable again with
+`--allow-private <that address>/32`, while `example.com` stayed reachable throughout.
 
 ```console
 $ smolvm machine run --net --image alpine --allow-host registry.npmjs.org -- \
@@ -153,7 +161,10 @@ and `references/traps.md` carry the measurements and what each host does.
 
 ## Platforms
 
-The offline shape this packet is built on works on macOS from v1.20.2 and not before;
-`references/macos.md` gives older releases a route that does and says what it costs. On Windows
+The offline shape this packet is built on works on macOS from v1.20.2 through v1.23.7. From v1.24.0
+(measured through v1.29.0) no `--oci-cache` run boots on macOS
+([#1819](https://github.com/smol-machines/smolvm/issues/1819)), so it is unavailable there again,
+as `SKILL.md` says; before v1.20.2 `references/macos.md` gives a route that does and says what it
+costs. On Windows
 the bake never completes, so the offline shape is unavailable there for a different reason:
 `references/windows.md`.

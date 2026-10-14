@@ -9,7 +9,7 @@
 - [dev-env](dev-env/SKILL.md): a machine you come back to, and what survives a stop and start
 - [coding-agent](coding-agent/SKILL.md): a coding agent with full permissions inside a machine, the project mounted
 - [docker-in-machine](docker-in-machine/SKILL.md): a Docker daemon inside a machine, for tools that call Docker themselves
-- [gpu-cuda](gpu-cuda/SKILL.md): CUDA Driver API calls remoted to the host NVIDIA GPU
+- [gpu-cuda](gpu-cuda/SKILL.md): the guest's CUDA Driver API calls, and Runtime API calls through a `libcudart` shim, remoted to the host's NVIDIA GPU
 - [install](install/SKILL.md): installing smolvm and proving the host can boot a microVM
 - [local-api](local-api/SKILL.md): driving the machine lifecycle over the local HTTP API
 - [pack](pack/SKILL.md): packing an image or a machine into a portable artifact
@@ -31,4 +31,5 @@
 - [gpu.md](gpu.md): Vulkan through virtio-gpu, and CUDA API remoting
 - [hardware-video.md](hardware-video.md): H.264 streaming of a machine's browser display
 - [kubernetes.md](kubernetes.md): pods as microVMs through a `RuntimeClass`
+- [usage-journal.md](usage-journal.md): the local record of machine lifecycle events, and how to read, disable or share it
 - [install-arch.md](install-arch.md), [install-debian.md](install-debian.md), [install-fedora.md](install-fedora.md), [install-nix.md](install-nix.md): the packaged installs

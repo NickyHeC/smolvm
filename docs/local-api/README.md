@@ -15,9 +15,8 @@ smolvm serve start --listen 127.0.0.1:8080           # loopback TCP instead
 smolvm serve openapi -o ./openapi.json               # the field names from your binary
 ```
 
-The default listen path is derived rather than fixed, and the help's own default line and its
-example disagree: on macOS the socket appeared at `/tmp/smolvm.sock` and on Linux at
-`/run/user/<uid>/smolvm.sock`. Read the path the server reports rather than assuming either.
+The default listen path differs per platform (`/tmp/smolvm.sock` on macOS,
+`/run/user/<uid>/smolvm.sock` on Linux) and `--help` shows only one; read the path the server reports.
 
 **A plain server has no authentication of any kind.** Whoever can reach the socket or the port can
 create and run machines, so treat it as equivalent to a shell on the host, and prefer the Unix

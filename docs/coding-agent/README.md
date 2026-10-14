@@ -32,7 +32,7 @@ accepted.
 ## Keeping the agent off your network
 
 `net = true` gives the agent everything your host can reach, including your LAN, a Tailscale
-network and services on the host's own ports. From the release after v1.27.4, `block_private =
+network and services on the host's own ports. From v1.28.1, `block_private =
 true` under `[network]` (or `--block-private`) keeps the public internet open and blocks private,
 internal and link-local destinations. `allow_private = ["10.20.0.0/16"]` re-opens one range, such
 as an internal registry. Cloud metadata stays blocked in every mode.
@@ -45,3 +45,8 @@ second with both agents still installed (OpenCode 1.19.0, Claude Code 2.1.300). 
 wrote in `/workspace` appeared on the host owned by the host user, `git status` worked on the
 mounted repo, `claude --dangerously-skip-permissions` was accepted as root, and `SSH_AUTH_SOCK`
 was set in the guest.
+
+On macOS arm64 with v1.29.0, the same Smolfile: the first start took 28 s with the image already
+pulled and 51 s with a cold pull; a restart took under a second with both agents still installed
+(OpenCode 1.19.1, Claude Code 2.1.301). A file written in `/workspace` appeared on the host, and
+`git status` worked on the mounted repo.

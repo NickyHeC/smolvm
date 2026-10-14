@@ -64,5 +64,4 @@ restored machine packs like any other, and carries its rootfs.
 
 ## Packing a branch
 
-A branched machine packs from v1.16.1 on, and the artifact carries both the state it inherited and
-the state written after the branch. It has to be stopped first. See [pack](../pack/README.md).
+A branched machine packs from v1.16.1 once it is stopped; see [pack](../pack/README.md).

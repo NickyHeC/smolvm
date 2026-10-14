@@ -1,16 +1,20 @@
 # Where smolvm state lives, and what removes it
 
 Observed on v1.14.2. The install prefix, the agent rootfs, the per-VM state and the pack cache were
-at the same paths on v1.18.2, 2026-09-24.
+at the same paths on v1.18.2, 2026-09-24. The image seeds row was observed on macOS arm64 on
+v1.22.2, and the registry token and image archive rows on macOS arm64 and Linux aarch64 on v1.23.0.
 
 | | macOS | Linux |
 |---|---|---|
-| install prefix | `$HOME/.smolvm` | `$HOME/.smolvm` |
+| install prefix (wrapper, `smolvm-bin`, `lib/`, `.version`, disk templates) | `$HOME/.smolvm` | `$HOME/.smolvm` |
 | launcher symlink | `$HOME/.local/bin/smolvm` | `$HOME/.local/bin/smolvm` |
 | agent rootfs | `$HOME/Library/Application Support/smolvm` | `$HOME/.local/share/smolvm` |
 | per-VM state | `$HOME/Library/Caches/smolvm/vms` | `$HOME/.cache/smolvm/vms` |
+| baked layers, the images `--oci-cache` baked | `$HOME/Library/Caches/smolvm/init-layers` | `$HOME/.cache/smolvm/init-layers` |
+| image seeds, the shared seed of each registry image a machine has run (v1.22.0 and later) | `$HOME/Library/Caches/smolvm/image-seeds` | `$HOME/.cache/smolvm/image-seeds` |
+| registry pull tokens, kept between commands (v1.23.0, [#1511](https://github.com/smol-machines/smolvm/pull/1511)) | `$HOME/Library/Caches/smolvm/registry-tokens` | `$HOME/.cache/smolvm/registry-tokens` |
 | shared pack store, after `machine create --from` or a checkpoint restore | not used | `.../smolvm/vms/_shared` |
-| pack cache | `$HOME/Library/Caches/smolvm-pack` | `$HOME/.cache/smolvm-pack` |
+| pack cache, where a cached run extracts | `$HOME/Library/Caches/smolvm-pack` | `$HOME/.cache/smolvm-pack` |
 | packed-binary lib cache | `$HOME/Library/Caches/smolvm-libs` | `$HOME/.cache/smolvm-libs` |
 | registry cache | `$HOME/Library/Caches/smolvm-registry` | not seen |
 | image archives: local `--image` archives, and from v1.23.0 images fetched on the host for a machine with no network | `$HOME/Library/Caches/smolvm-image-archives` | `$HOME/.cache/smolvm-image-archives` |
@@ -25,15 +29,11 @@ objects without removing the store.
 
 On macOS the VM cache also holds `_restore-base`, a clone of the last restored checkpoint with its
 memory, which stays until removed by hand or by the uninstaller. From v1.22.0 restores are cached in
-`_restore-checkpoints` instead, the three most recent and up to 16 GiB. Beside `vms/`, v1.22.2 also
-keeps `image-seeds/`, the shared seed of each registry image a machine has run, `init-layers/`, the
-images `--oci-cache` baked, and `agent-rootfs-tars/`. v1.23.0 adds `registry-tokens/`, the pull
-tokens the registry client keeps between commands
-([#1511](https://github.com/smol-machines/smolvm/pull/1511)). The uninstaller removes all of them
-with the cache directory.
+`_restore-checkpoints` instead, the three most recent and up to 16 GiB. Beside `vms/` the cache also
+keeps `agent-rootfs-tars/`; the uninstaller removes all of them with the cache directory.
 
-The last three are the ones people miss. `smolvm-libs` appears only once a packed `.smolmachine`
-stub has run, and the last two are deliberately left by the uninstaller.
+The ones people miss are `smolvm-libs`, which appears only once a packed `.smolmachine` stub has
+run, and the last two rows, which the uninstaller deliberately leaves.
 
 `scripts/preflight.sh` reports each of these with its size, so you know what a teardown has to
 remove before you remove it.

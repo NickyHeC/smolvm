@@ -1,9 +1,8 @@
 # A development machine you come back to
 
 A named machine keeps its disk across stop and start, so the packages you installed in the first
-session are there in the second. That is the whole use case, and it turns on one fact: **`init`
-runs once, not on every start**, as [`smolfile.md`](../smolfile.md) says, and as
-`machine create --help` says from v1.23.7; before that release the help said every start.
+session are there in the second. That is the whole use case, and it turns on one fact, below:
+**`init` runs once, not on every start**.
 
 `SKILL.md` is the procedure. `assets/dev.smolfile` is a working starting point, and
 [`examples/python-app/python.smolfile`](../../examples/python-app/python.smolfile) and
@@ -16,10 +15,10 @@ runs once, not on every start**, as [`smolfile.md`](../smolfile.md) says, and as
 | `machine run` | ephemeral, every change discarded when the command exits, unless `-d` leaves it running as a named machine that `exec` and `stop` act on |
 | `machine exec` | changes (package installs, config edits) persist across exec sessions, bare or image-based, in an overlay on the machine's storage disk |
 | `machine stop` then `start` | changes persist; the overlay is remounted |
-| `machine create --stop-on-exit` (Smolfile `stop_on_exit = true`) | the machine stops by itself when its workload exits, whatever the exit status, with storage flushed as for `machine stop`; `exec` sessions never trigger it, the restart policy then applies (the default, `never`, leaves it stopped), and the exit status is not passed on |
+| `machine create --stop-on-exit` (Smolfile `stop_on_exit = true`) | the machine stops itself when its workload exits, whatever the exit status, with storage flushed as for `machine stop`; the rest is in [smolfile.md](../smolfile.md#stopping-when-the-workload-exits) |
 | `pack run` | ephemeral, each run starts fresh from the packed image |
 | `pack start` then `exec` | daemon mode: package installs and file writes persist across exec sessions, and `/workspace` across a stop and start too |
-| `machine create --from <artifact>.smolmachine` | a persistent named machine from a packed artifact, booting from pre-extracted layers (about 250 ms, no image pull), with full `exec` persistence |
+| `machine create --from <artifact>.smolmachine` | a persistent named machine from a packed artifact, booting from pre-extracted layers (the agent ready in about 150 ms on v1.29.0 on macOS arm64, no image pull), with full `exec` persistence |
 
 `/tmp`, `/run` and `/dev/shm` are tmpfs whatever the mode, except that `machine run --unprivileged`
 keeps only `/dev/shm`. They keep their contents while the
@@ -32,8 +31,8 @@ v1.22.2 and on v1.27.3. Both are sparse, so they cost what they hold.
 
 ## `init` runs once
 
-A Smolfile's `init` is provisioning: it runs on the first start of a machine and is skipped on
-every start after that. Before v1.23.7 `smolvm machine create --help` described it as running on
+A Smolfile's `init` is provisioning, as [`smolfile.md`](../smolfile.md) says: it runs on the first
+start of a machine and is skipped on every start after that. Before v1.23.7 `smolvm machine create --help` described it as running on
 every VM start; provisioning that relies on that reading is missing on the second boot. Anything
 that must be true on every boot, a bind mount above all, belongs in the command the machine runs,
 not in `init`.

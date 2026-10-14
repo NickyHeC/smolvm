@@ -5,7 +5,8 @@ description: Runs a coding agent (Claude Code, OpenCode, Codex or any other) ins
 
 # A coding agent in a machine
 
-Verified on **smolvm v1.27.4** on Linux x86_64, 2026-10-14. Done means the agent runs inside the
+Verified on **smolvm v1.27.4** on Linux x86_64, 2026-10-14, and on **v1.29.0** on macOS arm64,
+2026-10-15. Done means the agent runs inside the
 machine from the project directory, its edits appear on the host, and git works on the mounted
 repo.
 
@@ -25,6 +26,10 @@ at launch, never written to the machine record:
 smolvm machine create --name agent -s Smolfile --secret-env ANTHROPIC_API_KEY=ANTHROPIC_API_KEY
 smolvm machine start --name agent      # first start runs init: under a minute once the image is pulled
 ```
+
+The Smolfile forwards your SSH agent, so `start` needs `SSH_AUTH_SOCK` set on the host: without it,
+it stops with `ssh-agent: SSH_AUTH_SOCK is not set`. Start one with `eval $(ssh-agent)`, or delete
+the `[auth]` block.
 
 **3. Run the agent.**
 
@@ -46,6 +51,6 @@ stays on the host.
 
 - `init` runs once. Changing it later needs a new machine, or run the new commands with `exec`.
 - To keep the agent off your LAN and the host's ports, add `block_private = true` under
-  `[network]` (from the release after v1.27.4). See `README.md`.
+  `[network]` (from v1.28.1). See `README.md`.
 - An agent that needs Docker: add `"/var/lib/docker", "/var/lib/containerd"` to `[dev] volumes`
-  (from the release after v1.27.4) and see [docker-in-machine](../docker-in-machine/README.md).
+  (from v1.28.1) and see [docker-in-machine](../docker-in-machine/README.md).

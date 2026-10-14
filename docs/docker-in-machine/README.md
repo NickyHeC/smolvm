@@ -13,8 +13,7 @@ namespace.
 
 ## The short version: two disk volumes
 
-From the release after v1.27.4, give Docker its data directories as disk volumes, a guest path with
-no host side:
+From v1.28.1, give Docker its data directories as disk volumes, a guest path with no host side:
 
 ```bash
 smolvm machine create --name dind --net --image docker:dind \
@@ -29,8 +28,11 @@ Smolfile it is `volumes = ["/var/lib/docker", "/var/lib/containerd"]`. On Linux 
 build of that change, `df /var/lib/docker` read `/dev/vda` on the first boot and after a stop and
 start, the `alpine` image survived the restart, and a nested `docker run` succeeded both times. The
 same machine without the volumes had `/var/lib/docker` on the overlay root and `docker run` failed.
+On macOS arm64 with v1.29.0 the commands above gave the same: `/dev/vda` and a nested `docker run`
+before and after a stop and start, `alpine:latest` still listed, and `docker info` answering 4 s
+after each start.
 
-The rest of this packet is the procedure for v1.27.4 and earlier, which have no disk volumes.
+The rest of this packet is the procedure for v1.28.0 and earlier, which have no disk volumes.
 
 ## Docker's data has to live on `/storage`
 
@@ -42,18 +44,16 @@ overlayfs needs. `/storage` is the machine's ext4 disk, and Docker's data root b
 dockerd --data-root=/storage/docker --storage-driver=overlay2
 ```
 
-The Smolfile here instead bind-mounts `/storage/docker` onto `/var/lib/docker`, which reads better
-to a container tool that assumes the default path. Both work. **`docker info` will not tell you
+`assets/docker-bind-mounts.smolfile`, for v1.28.0 and earlier, instead bind-mounts `/storage/docker`
+onto `/var/lib/docker`, which reads better to a container tool that assumes the default path. Both
+work. **`docker info` will not tell you
 which filesystem you ended up on**, so check the device, not the daemon.
 
 ## The bind mounts are gone on the second boot
 
-`init` runs once, not on every start, so after a stop and start the mounts are absent and `dockerd`
-is down. The upstream example's comments say the mounts must be re-applied after every start, and
-its "Start dockerd" recipe does that; `scripts/start-dockerd.sh` is that recipe. Run it after every
-start. The failure mode is a daemon that will
-not start, or one running on the wrong filesystem, not lost data: the images are on `/storage` and
-survive.
+`init` runs once, so after a stop and start the bind mounts are gone and `dockerd` is down.
+`scripts/start-dockerd.sh`, the upstream example's "Start dockerd" recipe, re-applies them; run it
+after every start. The images are on `/storage` and survive.
 
 ## Reaching the daemon from the host
 

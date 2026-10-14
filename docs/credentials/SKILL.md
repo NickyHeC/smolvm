@@ -5,9 +5,9 @@ description: Gives a workload in a smolvm machine an API key or token it can use
 
 # A credential the machine can use and never hold
 
-Verified on **smolvm v1.22.2** on macOS arm64, 2026-10-03, and on **v1.18.2** on Linux aarch64, 2026-09-24, for everything that
-is decided on the host; **the substitution arriving at a real API was not observed**,
-for the reason under "What was not run". Done means the guest's variable is a placeholder, the value
+Verified on **smolvm v1.29.0** on macOS arm64, 2026-10-15, and on **v1.18.2** on Linux aarch64, 2026-09-24, for everything that
+is decided on the host; on v1.29.0 on macOS arm64 **the substituted value also arrived at a real API**
+that echoes the headers it received, a dummy value. Done means the guest's variable is a placeholder, the value
 is nowhere in the guest, the machine's record or smolvm's database, TLS to the bound host goes
 through the machine's own CA, and a placeholder anywhere but a request header is refused before it
 leaves the host (from v1.27.0 a binding with `:body` also substitutes into a form body).
@@ -138,12 +138,9 @@ and send it anywhere the network allows; that is why the binding is the default 
 
 Full detail in `references/traps.md`.
 
-- **An environment value behaved as the one the machine started with.**
-  `docs/credential-substitution.md` says it is read at `machine start` and `machine exec` time. On
-  v1.18.2, unsetting or changing the host variable for a later `machine exec` changed nothing, and a
-  machine started with it unset answered every substituted request `smolvm credentials: credential
-  unavailable` with a `502`. Rotate an environment value with a restart, or use a file reference,
-  which the same page says is read per request.
+- **An environment value behaves as the one the machine started with**; `README.md` has the
+  v1.18.2 measurement. Rotate it with a restart, or use a file reference,
+  read per request.
 - **Never put the real value on an `exec` command line.** smolvm writes exec commands into the
   machine's console log on the host, so a check that interpolated the value into its own `grep`
   planted it in `agent-console.log` and failed itself. `verify-containment.sh` hands the value to
@@ -180,7 +177,7 @@ Full detail in `references/traps.md`.
 
 ## Platform arms
 
-`references/platforms.md`. macOS arm64 ran every script on v1.22.2, and both hosts gave the same
+`references/platforms.md`. macOS arm64 ran every script on v1.29.0 and v1.22.2, and both hosts gave the same
 results on v1.18.2, on the default virtio-net backend and on `--net-backend tsi`. Linux x86_64 and
 Windows were not run.
 
@@ -233,6 +230,19 @@ with `is not reachable under the machine's network allow_hosts`. From v1.26.0 `*
 accepted, and an IP address is refused with `must be a lowercase DNS name, optionally` followed by
 the wildcard form.
 
+## Re-verified on v1.29.0
+
+Run 2026-10-15 PT against v1.29.0 from the published release, checksum checked, under a fresh
+isolated `HOME` on macOS 27.0.1 arm64, the scripts twice, the second time from a fresh `HOME`, and
+the checks beyond them once. Linux was not run, so the Linux stamp stays on its earlier release.
+
+The preflight said `result=ready` with `tsi_stream_intercept=yes` once `SMOLVM_LIB_DIR` was set,
+`create-credentialed.sh` `guest_sees=placeholder`, and `verify-containment.sh` gave every line `ok`
+and `result=contained`. Bound to `httpbin.org`, the step 4 request to `https://httpbin.org/headers`
+came back with `Authorization: Bearer <the value>`, a dummy value made for the run, so the value
+reached the API. `--secret-env` printed `set`, and with the host variable unset the run stopped with
+`resolve secret 'API_TOKEN': env_unset`.
+
 ## Re-verified on v1.22.2
 
 Run 2026-10-03 PT against v1.22.2 from the published release, checksum checked, under an isolated
@@ -248,8 +258,9 @@ record search, `verify-containment.sh` and the rest of the procedure took 25 s.
 
 ## What was not run
 
-- **The value arriving at an API.** Seeing it needs an HTTPS endpoint with a publicly trusted
-  certificate that reports the header it received, and none was used. On v1.18.2 on macOS arm64 a
+- **The value arriving at an API, before v1.29.0.** Seeing it needs an HTTPS endpoint with a
+  publicly trusted certificate that reports the header it received; on v1.29.0 on macOS arm64 one
+  did ("Re-verified on v1.29.0"), and it was not observed on Linux. On v1.18.2 on macOS arm64 a
   substituted request to `example.com` was forwarded and answered `200`, which `example.com` gives
   whatever the header holds; on v1.22.2 on macOS arm64 the substituted request to a local server
   with a self-signed certificate was answered `502 smolvm credentials: upstream request failed` and
