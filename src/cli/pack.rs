@@ -8,7 +8,7 @@
 //! - Configuration manifest
 
 use clap::{Args, Subcommand};
-use smolvm::agent::{AgentClient, AgentManager, VmResources};
+use smolvm::agent::{AgentClient, AgentManager, LaunchFeatures, VmResources};
 
 /// Default memory for packed VMs. Same as machine create — memory is elastic
 /// via virtio balloon, so the host only commits what the guest actually uses.
@@ -34,6 +34,10 @@ const PACK_VM_MIN_STORAGE_GIB: u64 = 64;
 /// storage disk. Extraction inflates gzip'd layers ~3×; the rest is margin —
 /// the disk is sparse, so over-sizing costs nothing on the host.
 const PACK_VM_STORAGE_FACTOR: u64 = 8;
+
+/// Where the pack VM's agent unpacks a local archive shared at `/packed_layers`:
+/// the path a machine's first boot uses.
+const LOCAL_ARCHIVE_ROOTFS: &str = "/storage/image-archives/packed_layers/0000_rootfs";
 
 /// Package and run self-contained VM executables.
 #[derive(Subcommand, Debug)]
@@ -411,7 +415,9 @@ impl PruneCheckpointStoreCmd {
 ///   smolvm pack create --from-vm myvm -o my-devenv
 #[derive(Args, Debug)]
 pub struct PackCreateCmd {
-    /// Container image to pack (e.g., alpine:latest, python:3.11-slim)
+    /// Container image to pack: a registry reference (alpine:latest, python:3.11-slim), a
+    /// `docker save` archive (./myapp.tar, or `-` to read one from stdin), or an unpacked
+    /// rootfs directory (./rootfs/)
     #[arg(
         long,
         short = 'I',
@@ -600,15 +606,19 @@ impl PackCreateCmd {
     /// host-side and the disk is sized at `compressed ×
     /// PACK_VM_STORAGE_FACTOR`, floored at `PACK_VM_MIN_STORAGE_GIB`. The
     /// factor covers gzip's ~3× expansion on extraction plus margin; the floor
-    /// matches the export helper's. When the manifest can't be probed (offline
-    /// registry, local image source) the floor is used: the disk is sparse, so
-    /// over-sizing is free, while under-sizing fails the pull mid-way.
+    /// matches the export helper's. A local source is sized the same way from
+    /// its bytes on the host. When the manifest can't be probed (offline
+    /// registry) the floor is used: the disk is sparse, so over-sizing is free,
+    /// while under-sizing fails the pull mid-way.
     fn pack_vm_storage_gib(&self, image: &str, oci_platform: Option<&str>) -> u64 {
         if let Some(gib) = self.storage {
             return gib;
         }
-        if smolvm::data::image_source::is_local_ref(image) {
-            return PACK_VM_MIN_STORAGE_GIB;
+        if let Some(dir) = smolvm::data::image_source::packed_layers_dir_for_ref(image) {
+            return smolvm::pack_export::directory_apparent_bytes(&dir)
+                .div_ceil(smolvm::data::consts::BYTES_PER_GIB)
+                .saturating_mul(PACK_VM_STORAGE_FACTOR)
+                .max(PACK_VM_MIN_STORAGE_GIB);
         }
         let rt = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
@@ -712,30 +722,31 @@ impl PackCreateCmd {
             )
         })?;
 
-        // `pack create` pulls directly from an OCI container registry. If a user passes
-        // a local file path, image archive, or rootfs directory, provide a helpful diagnostic
-        // rather than failing on OCI reference character validation.
-        let image_trimmed = image.trim();
-        if image_trimmed.starts_with("./")
-            || image_trimmed.starts_with("../")
-            || image_trimmed.starts_with('/')
-            || image_trimmed.starts_with('~')
-            || image_trimmed.ends_with(".tar")
-            || image_trimmed.ends_with(".tar.gz")
-            || image_trimmed.ends_with(".tar.zst")
-            || image_trimmed.ends_with(".tgz")
-            || std::path::Path::new(image_trimmed).exists()
+        // A local archive or rootfs directory is staged on the host exactly as
+        // `machine create` stages it, shared into the pack VM, and unpacked there
+        // as on a machine's first boot. The manifest names the same `local:` or
+        // `local-dir:` token the machine would carry, which the from-vm export and
+        // `machine create --from` both read as the image's kind.
+        use smolvm::data::image_source::{classify, resolve, ImageSource, ResolvedImage};
+        let source = classify(&image);
+        if let (ImageSource::Archive(_) | ImageSource::Directory(_), Some(platform)) =
+            (&source, pack_config.oci_platform.as_deref())
         {
             return Err(Error::config(
                 "pack create",
                 format!(
-                    "'--image' accepts container registry references (e.g. 'alpine:latest'). \
-                     To create a packed executable from a local image archive or rootfs directory ('{image}'), \
-                     first create the machine with 'smolvm machine create --image {image}' and then pack it \
-                     with 'smolvm pack create --from-vm <name>'."
+                    "--oci-platform {platform} selects among a registry image's platforms, \
+                     and the local image '{image}' carries only the one it was built for."
                 ),
             ));
         }
+        let (image, packed_layers_dir) = match resolve(source)? {
+            ResolvedImage::Registry(reference) => (reference, None),
+            ResolvedImage::Local {
+                reference,
+                packed_layers_dir,
+            } => (reference, Some(packed_layers_dir)),
+        };
 
         info!(image = %image, output = %self.output.display(), "packing image");
 
@@ -820,12 +831,15 @@ impl PackCreateCmd {
         let pack_storage_gib =
             Some(self.pack_vm_storage_gib(&image, pack_config.oci_platform.as_deref()));
         let manager = AgentManager::for_vm_with_sizes(&pack_vm_name, pack_storage_gib, None)?;
-        manager.start_with_config(
+        // A local source pulls nothing, so its pack VM has no network.
+        let network = packed_layers_dir.is_none();
+        manager.start_with_full_config(
+            Vec::new(),
             Vec::new(),
             VmResources {
                 cpus: 4,
                 memory_mib: 8192,
-                network: true,
+                network,
                 network_backend: None,
                 dns: self.dns,
                 dns_options: Vec::new(),
@@ -847,6 +861,10 @@ impl PackCreateCmd {
                 allowed_cidrs: None,
                 egress_rules: Vec::new(),
             },
+            LaunchFeatures {
+                packed_layers_dir: packed_layers_dir.clone(),
+                ..Default::default()
+            },
         )?;
         let mut guard = PackVmGuard {
             manager,
@@ -865,10 +883,23 @@ impl PackCreateCmd {
         )?;
         debug!(image_info = ?image_info, "image pulled");
 
-        println!(
-            "Image: {} ({} layers, {} bytes)",
-            image, image_info.layer_count, image_info.size
-        );
+        // The pull above unpacked a local archive onto the pack VM's disk, at the
+        // path a machine's first boot uses, and refused one built for another
+        // architecture; a rootfs directory is read in place from the share.
+        // Either is exported below as the pack's single layer.
+        let local_rootfs = packed_layers_dir.as_ref().map(|_| {
+            if image.starts_with("local-dir:") {
+                "/packed_layers"
+            } else {
+                LOCAL_ARCHIVE_ROOTFS
+            }
+        });
+        if local_rootfs.is_none() {
+            println!(
+                "Image: {} ({} layers, {} bytes)",
+                image, image_info.layer_count, image_info.size
+            );
+        }
 
         // Create asset collector and collect base assets
         let mut collector = AssetCollector::new(staging_dir.clone())
@@ -880,7 +911,7 @@ impl PackCreateCmd {
         // so the packed binary has one lowerdir at runtime. Without this, the
         // overlayfs multi-lowerdir mount fails on virtiofs-backed layers and
         // falls back to a 15-second physical merge on every first exec.
-        if image_info.layer_count <= 1 {
+        if local_rootfs.is_none() && image_info.layer_count <= 1 {
             // Single layer — export directly, no merge needed.
             let layer_digest = &image_info.layers[0];
             let prefix = format!("  Layer 1/1: {}", &layer_digest[..19]);
@@ -898,26 +929,30 @@ impl PackCreateCmd {
             // copy and no staged archive on the guest's RAM-sized /tmp, and
             // whiteouts/opaque markers resolve exactly as the runtime applies
             // them — a `cp -a` merge resurrected deleted paths.
-            println!(
-                "Merging {} layers in VM (one-time cost)...",
-                image_info.layer_count
-            );
-
             // The agent stacks lowerdirs topmost-first, the same order the
             // runtime container mount uses; image_info.layers lists them
             // bottom-up, so reverse. Driven agent-side rather than through
             // `mount(8)` over VmExec: `mount(8)` rejects a `lowerdir=` value
             // past ~255 bytes, which any image with four or more layers
-            // exceeds.
-            let stack: Vec<String> = image_info
-                .layers
-                .iter()
-                .rev()
-                .map(|d| {
-                    let id = d.strip_prefix("sha256:").unwrap_or(d);
-                    format!("/storage/layers/{}", id)
-                })
-                .collect();
+            // exceeds. A single directory is archived as it is.
+            let stack: Vec<String> = match local_rootfs {
+                Some(rootfs) => vec![rootfs.to_string()],
+                None => {
+                    println!(
+                        "Merging {} layers in VM (one-time cost)...",
+                        image_info.layer_count
+                    );
+                    image_info
+                        .layers
+                        .iter()
+                        .rev()
+                        .map(|d| {
+                            let id = d.strip_prefix("sha256:").unwrap_or(d);
+                            format!("/storage/layers/{}", id)
+                        })
+                        .collect()
+                }
+            };
 
             // Stream the merged tar to disk (never buffered whole in memory,
             // never staged in the guest), then content-address it. Stage in
@@ -2298,10 +2333,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn pack_create_rejects_local_archive_paths_with_clear_diagnostic() {
-        let cmd = PackCreateCmd {
-            image: Some("./local-image.tar".to_string()),
+    fn pack_create(image: &str) -> PackCreateCmd {
+        PackCreateCmd {
+            image: Some(image.to_string()),
             from_vm: None,
             rebase_from_image: false,
             include_workspace: false,
@@ -2321,17 +2355,44 @@ mod tests {
             gpu: false,
             staging_dir: None,
             proxy_opts: crate::cli::proxy_opts::ProxyOpts::default(),
-        };
+        }
+    }
 
-        let err = cmd.run().expect_err("local archive path must be rejected");
-        let err_msg = err.to_string();
-        assert!(
-            err_msg.contains("'--image' accepts container registry references"),
-            "Expected registry reference explanation, got: {err_msg}"
+    /// A local image carries one platform, so `--oci-platform` has nothing to
+    /// select. Refused before anything is staged: the archive here does not
+    /// even exist.
+    #[test]
+    fn a_local_image_with_an_oci_platform_is_refused_before_staging() {
+        let rootfs = tempfile::tempdir().unwrap();
+        for image in ["./missing.tar", rootfs.path().to_str().unwrap()] {
+            let mut cmd = pack_create(image);
+            cmd.oci_platform = Some("linux/amd64".to_string());
+            let message = cmd.run().expect_err("must be refused").to_string();
+            assert!(
+                message.contains("--oci-platform") && message.contains(image),
+                "{message}"
+            );
+        }
+    }
+
+    /// The pack VM unpacks a local archive onto its own disk, so the disk grows
+    /// with the source the way it grows with a registry image's layers.
+    #[test]
+    fn the_pack_vm_disk_is_sized_from_a_local_source() {
+        let source = tempfile::tempdir().unwrap();
+        let cmd = pack_create("unused");
+        let reference = format!("local-dir:{}", source.path().display());
+        assert_eq!(
+            cmd.pack_vm_storage_gib(&reference, None),
+            PACK_VM_MIN_STORAGE_GIB
         );
-        assert!(
-            err_msg.contains("pack create --from-vm"),
-            "Expected recommendation to use pack create --from-vm, got: {err_msg}"
+        std::fs::File::create(source.path().join("archive.tar"))
+            .unwrap()
+            .set_len(100 * smolvm::data::consts::BYTES_PER_GIB)
+            .unwrap();
+        assert_eq!(
+            cmd.pack_vm_storage_gib(&reference, None),
+            100 * PACK_VM_STORAGE_FACTOR
         );
     }
 }

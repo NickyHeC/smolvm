@@ -373,10 +373,10 @@ fn parse_helper_override(value: Option<&str>) -> Option<u64> {
     value?.trim().parse::<u64>().ok().filter(|gib| *gib > 0)
 }
 
-/// Apparent bytes held under `dir`, used to size the helper for an
-/// artifact-sourced machine whose image lives here rather than on its disk.
+/// Apparent bytes held under `dir`, used to size a helper or pack VM disk for
+/// an image that lives here on the host rather than on a machine's disk.
 /// Unreadable entries are skipped: this only feeds a disk-size heuristic.
-fn directory_apparent_bytes(dir: &Path) -> u64 {
+pub fn directory_apparent_bytes(dir: &Path) -> u64 {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
     };
