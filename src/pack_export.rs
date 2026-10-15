@@ -419,9 +419,12 @@ impl ExportVm {
             return Err(Error::agent(
                 "pack from VM",
                 format!(
-                    "machine '{vm_name}' has no storage disk yet ({}) — it has \
-                     never been started. Start it once so its state exists, or \
-                     pack the image directly with `pack create -I <image>`.",
+                    "machine '{vm_name}' has no storage disk yet ({}): it has \
+                     never been started. Start it once so its state exists, stop \
+                     it, and pack it again:\
+                     \n\n  smolvm machine start --name {vm_name}\
+                     \n  smolvm machine stop --name {vm_name}\
+                     \n\nOr pack the image it was created from directly with `pack create -I <image>`.",
                     storage_disk.display()
                 ),
             ));
@@ -1005,6 +1008,20 @@ mod cached_export_tests {
         );
         unrelated.kill().unwrap();
         unrelated.wait().unwrap();
+    }
+
+    /// A never-started machine is refused before any helper boots, naming the
+    /// start that creates its disk and the stop the export needs after it.
+    #[test]
+    fn never_started_machine_hint_names_the_start_and_the_stop() {
+        let vm_dir = tempfile::tempdir().unwrap();
+        let Some(error) = ExportVm::start("x", vm_dir.path(), None, false, None).err() else {
+            panic!("a machine without a storage disk must be refused");
+        };
+        let message = error.to_string();
+        let start = message.find("smolvm machine start --name x");
+        let stop = message.find("smolvm machine stop --name x");
+        assert!(start.is_some() && start < stop, "{message}");
     }
 
     fn exercise(
