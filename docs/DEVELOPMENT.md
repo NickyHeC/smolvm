@@ -14,13 +14,10 @@
 We use [`cargo-make`](https://github.com/sagiegurari/cargo-make) to orchestrate build tasks:
 
 ```bash
-# Install cargo-make (one-time)
-cargo install cargo-make
-
 # View all available tasks
 cargo make --list-all-steps
 
-# Build and codesign (macOS) - binary ready at ./target/release/smolvm
+# Build and codesign with the hypervisor entitlement (macOS) - binary ready at ./target/release/smolvm
 cargo make dev
 
 # Run smolvm with environment variables set up automatically
@@ -31,11 +28,6 @@ cargo make smolvm machine ls
 # Or run the binary directly with environment variables:
 DYLD_LIBRARY_PATH="./lib" SMOLVM_AGENT_ROOTFS="./target/agent-rootfs" ./target/release/smolvm <command>
 ```
-
-**How it works:**
-- `cargo make dev` builds + codesigns (macOS only), binary ready at `./target/release/smolvm`
-- `cargo make smolvm <args>` runs smolvm with `DYLD_LIBRARY_PATH` and `SMOLVM_AGENT_ROOTFS` set up
-- On macOS, binary is automatically signed with hypervisor entitlements
 
 ## Building Distribution Packages
 
@@ -96,13 +88,8 @@ cargo make fix-lints
 cargo make install
 ```
 
-The `cargo make dist` task wraps `scripts/build-dist.sh`. Other scripts:
-
-```bash
-./scripts/build-dist.sh
-./scripts/build-agent-rootfs.sh
-./scripts/install-local.sh
-```
+The `cargo make dist` task wraps `scripts/build-dist.sh`; the other scripts are
+`scripts/build-agent-rootfs.sh` and `scripts/install-local.sh`.
 
 ## Rebuilding Libraries
 

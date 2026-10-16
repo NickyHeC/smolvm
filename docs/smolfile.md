@@ -31,13 +31,6 @@ Port mappings accept a single port (`"8080"`), an explicit mapping (`"8080:80"`)
 Unknown keys are rejected rather than ignored, so a typo fails at create time
 instead of silently doing nothing.
 
-Common keys: `image`, `cpus`, `memory`, `net`, `ports`, `volumes`, `env`,
-`init` (runs once as root, like a Dockerfile `RUN`), `workdir`, `user` (who the
-workload runs as), `gpu`, `cuda`, `docker_socket`, `storage`, `overlay`,
-`stop_on_exit` (stop the machine when its workload exits), `stop_signal` and
-`stop_timeout` (how the workload is stopped with the machine), and the
-`[network]`, `[dev]`, `[auth]`, `[health]`, `[restart]`, `[service]` tables.
-
 ## Reference
 
 ```toml
@@ -64,7 +57,7 @@ overlay = 4                           # overlay disk GiB (default: 10)
 # Mounts, ports and provisioning ([dev] lists below replace these when set)
 volumes = ["./src:/app"]              # host bind mounts; a guest path alone ("/var/lib/docker") is a directory on the machine's disk
 ports = ["8080:8080", "27015:27015/udp"]  # host:guest forwarding; /udp for UDP
-init = ["pip install -r requirements.txt"]  # run once, on the machine's first start
+init = ["pip install -r requirements.txt"]  # run once as root, on the machine's first start
 
 # Network policy: egress filtering by hostname and/or CIDR
 [network]
@@ -186,6 +179,3 @@ number; `stop_timeout` is whole seconds, at most 300. The same settings are
 `machine create --stop-signal` and `--stop-timeout`, and `machine stop
 --timeout SECS` overrides the wait for one stop (`0` kills at once).
 `machine delete` does not wait.
-
-The workload's stdout and stderr go to `workload.log` in the machine's data
-directory; `machine logs` shows it, also while the machine is stopped.

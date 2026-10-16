@@ -69,11 +69,10 @@ smolvm machine create --name oauth --image curlimages/curl:8.11.1 \
 
 Inside the VM, `curl -d "grant_type=refresh_token&refresh_token=$REFRESH_TOKEN"
 https://auth.example.com/token` sends the host's current file value as one
-percent-encoded form field. Rotating the host file takes effect on the next
-request, without restarting the machine. The same placeholder in a header and
-the form body of one request is allowed; two different placeholders are refused.
+percent-encoded form field. The same placeholder in a header and the form body
+of one request is allowed; two different placeholders are refused.
 
-API (`POST /v1/machines`): the same object under `credentials`, with
+API (`POST /api/v1/machines`): the same object under `credentials`, with
 `injection_location: { "header": true, "body": true }` for form-body
 substitution (omit `body` to keep the default).
 
@@ -121,15 +120,18 @@ methods = ["GET", "POST"]
 
 ## Where the value comes from
 
-The host resolves each binding on every request, so rotating a credential
-needs no restart, and nothing is cached across requests.
+The host resolves each binding on every request, in the process `machine start`
+launched. A file reference is therefore read fresh each time, so rotating the
+file needs no restart. An environment variable is read from the environment
+`machine start` ran with, so changing it later, including on a `machine exec`,
+has no effect until a restart.
 
 1. A `[secrets]` reference (or `--secret-env` / `--secret-file`) under the
    **same variable name** as the binding's `environment_variable`. That
    reference feeds the substitution instead of being injected as plaintext.
-2. Otherwise, the host environment variable of that name at `machine start`
-   and `machine exec` time. This is the `dotenvx run -- smolvm machine start …`
-   path: decrypted values live only in the host process.
+2. Otherwise, the host environment variable of that name, as `machine start`
+   saw it. This is the `dotenvx run -- smolvm machine start …` path: decrypted
+   values live only in the host process.
 
 ```toml
 [secrets]
@@ -183,12 +185,16 @@ the destination. The interceptor reads the TLS server name:
 
 Refused with a `403` and a one-line reason in the body:
 
-- a placeholder in the path, query string or request body;
+- a placeholder in the path or query string, or in a request body when the
+  binding lacks `:body`;
 - a placeholder in a routing or framing header (`Host`, `Content-Length`,
   `Transfer-Encoding`, `Connection`, `Cookie`, …);
 - more than one placeholder in a request;
 - a placeholder the machine did not mint, or one whose binding does not allow
   this host or method (`405`).
+
+Under `:body`, a request body that is not `application/x-www-form-urlencoded`
+is refused with a `415`.
 
 `502 smolvm credentials: credential unavailable` means the host could not
 resolve the binding — the variable is unset, the file is missing or

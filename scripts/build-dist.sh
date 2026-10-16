@@ -671,7 +671,7 @@ PREREQUISITES
 
 macOS:
   - macOS 11.0 (Big Sur) or later
-  - Apple Silicon or Intel Mac
+  - Apple Silicon Mac
 
 Linux:
   - KVM support (/dev/kvm must exist)

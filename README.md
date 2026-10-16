@@ -116,13 +116,10 @@ NOTION_API_KEY=secret_… smolvm machine run --net --image alpine \
 ```
 
 See [credential substitution](docs/credential-substitution.md) and the [security model](docs/security-model.md).
-Use `--allow-host-pattern '*.example.com'` to allow subdomains only. The older
-`--allow-host example.com` continues to allow both the apex and subdomains.
-A machine's allow list can be changed with `smolvm machine update`
-(`--allow-host`, `--allow-host-pattern` and `--allow-cidr` add; `--remove-allow-host` removes a host
-or a pattern as it was added, and `--remove-allow-cidr` a range),
-also while it runs when it was started with an allow list: a grant applies to the
-next connection or lookup, and a removed host's learned addresses go with it.
+Use `--allow-host-pattern '*.example.com'` to allow subdomains only; `--allow-host example.com` allows the apex and
+its subdomains. `smolvm machine update` adds (`--allow-host`, `--allow-host-pattern`, `--allow-cidr`) and removes
+(`--remove-allow-host`, a host or pattern as it was added; `--remove-allow-cidr`) entries, also on a running machine
+started with an allow list: a grant applies to the next connection or lookup, and a removed host's learned addresses go with it.
 
 How It Works
 ------------
@@ -137,7 +134,7 @@ Comparison
 |                     | smolvm | Containers | Colima | QEMU | Firecracker | Kata |
 |---------------------|--------|------------|--------|------|-------------|------|
 | Workload boundary   | VM + guest kernel | Namespace + shared kernel | Namespace inside shared VM | VM + guest kernel | VM + guest kernel | VM per container |
-| Boot time           | <200ms | ~100ms | ~seconds | ~15-30s | <125ms | ~500ms |
+| Boot time           | <200ms to agent ready | ~100ms | ~seconds | ~15-30s | <125ms | ~500ms |
 | Architecture        | Library (libkrun) | Daemon | Daemon (in VM) | Process | Process | Runtime stack |
 | Per-workload VMs    | Yes | No | No (shared) | Yes | Yes | Yes |
 | macOS native        | Yes | Via Docker VM | Yes (krunkit) | Yes | No | No |
@@ -150,7 +147,7 @@ Platform Support
 | Host | Guest | Requirements |
 |------|-------|-------------|
 | macOS Apple Silicon | arm64 Linux | macOS 11+ |
-| macOS Intel | x86_64 Linux | macOS 11+ (untested) |
+| macOS Intel | x86_64 Linux | no release build published; untested |
 | Linux x86_64 | x86_64 Linux | KVM (`/dev/kvm`) |
 | Linux aarch64 | aarch64 Linux | KVM (`/dev/kvm`) |
 | Windows x86_64 | x86_64 Linux | Windows Hypervisor Platform (WHP) enabled |
