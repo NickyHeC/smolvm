@@ -20,6 +20,8 @@ ANGLE (Intel, Vulkan 1.4 (Virtio-GPU Venus (Intel(R) UHD Graphics ...)), venus)
 
 > virglrenderer depends on libEGL and libdrm from the host GPU driver stack. These are hardware-specific and cannot be bundled. Any GPU-capable Linux host will already have them installed via its GPU driver.
 
+**An NVIDIA host needs virglrenderer 1.2.0 or newer.** Older render servers preload Vulkan in a way NVIDIA's driver rejects, so the guest's `vkCreateDevice` fails with `VK_ERROR_INITIALIZATION_FAILED`; 1.2.0 turns that preload off by default ([upstream MR 1557](https://gitlab.freedesktop.org/virgl/virglrenderer/-/merge_requests/1557)). Ubuntu 24.04 packages 1.0.0, so on such a host build 1.2.0 or newer from source, keeping `vulkan-preload=false`, or use a release that ships it ([#730](https://github.com/smol-machines/smolvm/issues/730)).
+
 **Windows**: not available (WHP); `--gpu` has no effect there.
 
 ## Usage
