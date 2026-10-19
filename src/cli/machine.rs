@@ -706,14 +706,15 @@ pub struct RunCmd {
     pub trust_host_certs: bool,
 
     /// Bind a credential the workload may use without ever seeing it:
-    /// NAME=ENV_VAR@HOST[,HOST...][:body]. The guest gets a placeholder in ENV_VAR;
+    /// NAME=ENV_VAR@HOST[,HOST...][:body][:set-header=HEADER]. The guest gets a placeholder in ENV_VAR;
     /// the host substitutes the real value (from a `--secret-env`/`--secret-file`
     /// ref of the same name, else the host variable ENV_VAR) only on HTTPS
-    /// requests to the listed hosts. Add :body for OAuth form-body tokens.
+    /// requests to the listed hosts. Add :body for OAuth form-body tokens or
+    /// :set-header=HEADER to set a request header to the complete secret value.
     /// Can be used multiple times; implies --net.
     #[arg(
         long = "credential",
-        value_name = "NAME=ENV_VAR@HOST[:body]",
+        value_name = "NAME=ENV_VAR@HOST[,HOST...][:body][:set-header=HEADER]",
         help_heading = "Network"
     )]
     pub credential: Vec<String>,
@@ -2681,6 +2682,45 @@ mod tests {
     use clap::Parser;
 
     #[test]
+    fn cli_credential_set_header_reaches_the_machine_record() {
+        let mut params = crate::cli::smolfile::build_create_params(
+            "credential-header".into(),
+            None,
+            None,
+            vec![],
+            None,
+            None,
+            vec![],
+            vec![],
+            false,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap();
+        merge_cli_credentials(
+            &mut params,
+            &["github=GITHUB_AUTH@api.github.com:set-header=authorization".into()],
+        )
+        .unwrap();
+
+        let record = vm_common::build_vm_record(&params).unwrap();
+        let binding = &record.credential_policy.unwrap().credentials[0];
+        assert_eq!(binding.set_header.as_deref(), Some("authorization"));
+        assert_eq!(binding.environment_variable, "GITHUB_AUTH");
+    }
+
+    #[test]
     fn cli_overlay_owner_uses_the_golden_for_fork_clones() {
         let ordinary =
             smolvm::config::VmRecord::new("ordinary".into(), 1, 512, Vec::new(), Vec::new(), false);
@@ -4310,12 +4350,16 @@ pub struct CreateCmd {
     pub trust_host_certs: bool,
 
     /// Bind a credential the workload may use without ever seeing it:
-    /// NAME=ENV_VAR@HOST[,HOST...][:body]. The guest gets a placeholder in ENV_VAR;
+    /// NAME=ENV_VAR@HOST[,HOST...][:body][:set-header=HEADER]. The guest gets a placeholder in ENV_VAR;
     /// the host substitutes the real value (from a `--secret-env`/`--secret-file`
     /// ref of the same name, else the host variable ENV_VAR) only on HTTPS
-    /// requests to the listed hosts. Add :body for OAuth form-body tokens.
+    /// requests to the listed hosts. Add :body for OAuth form-body tokens or
+    /// :set-header=HEADER to set a request header to the complete secret value.
     /// Can be used multiple times; implies --net.
-    #[arg(long = "credential", value_name = "NAME=ENV_VAR@HOST[:body]")]
+    #[arg(
+        long = "credential",
+        value_name = "NAME=ENV_VAR@HOST[,HOST...][:body][:set-header=HEADER]"
+    )]
     pub credential: Vec<String>,
 
     /// Restrict outbound to localhost only (implies --net)

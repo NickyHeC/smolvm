@@ -307,16 +307,49 @@ impl CredentialResolver for SecretRefResolver {
     }
 }
 
-/// Parse a `--credential NAME=ENV_VAR@HOST[,HOST...][:body]` flag.
+/// Parse a `--credential NAME=ENV_VAR@HOST[,HOST...][:body][:set-header=HEADER]` flag.
 pub fn parse_credential_flag(spec: &str) -> std::result::Result<CredentialBinding, String> {
-    let usage =
-        "expected NAME=ENV_VAR@HOST[,HOST...][:body] (e.g. notion=NOTION_API_KEY@api.notion.com)";
+    let usage = "expected NAME=ENV_VAR@HOST[,HOST...][:body][:set-header=HEADER] \
+        (e.g. notion=NOTION_API_KEY@api.notion.com)";
     let (name, rest) = spec.split_once('=').ok_or(usage)?;
     let (env_var, hosts) = rest.split_once('@').ok_or(usage)?;
-    let (hosts, body) = match hosts.strip_suffix(":body") {
-        Some(hosts) => (hosts, true),
-        None => (hosts, false),
-    };
+    let mut parts = hosts.split(':');
+    let hosts = parts.next().expect("split always yields a first part");
+    let mut body = false;
+    let mut set_header = None;
+    for modifier in parts {
+        match modifier {
+            "" => {
+                return Err(format!(
+                    "credential modifier is empty; use :body or :set-header=HEADER; {usage}"
+                ));
+            }
+            "body" if body => return Err("credential modifier :body appears more than once".into()),
+            "body" => body = true,
+            modifier if modifier.starts_with("set-header=") => {
+                if set_header.is_some() {
+                    return Err(
+                        "credential modifier :set-header=HEADER appears more than once".into(),
+                    );
+                }
+                let header = &modifier["set-header=".len()..];
+                if header.is_empty() {
+                    return Err(
+                        "credential modifier :set-header=HEADER requires a non-empty header name"
+                            .into(),
+                    );
+                }
+                // Header names are case-insensitive; store the lowercase form
+                // the policy requires, as hosts are above.
+                set_header = Some(header.to_ascii_lowercase());
+            }
+            modifier => {
+                return Err(format!(
+                    "unknown credential modifier :{modifier}; expected :body or :set-header=HEADER"
+                ));
+            }
+        }
+    }
     let allowed_hosts: Vec<String> = hosts
         .split(',')
         .map(|h| h.trim().to_ascii_lowercase())
@@ -337,7 +370,7 @@ pub fn parse_credential_flag(spec: &str) -> std::result::Result<CredentialBindin
             .iter()
             .map(|m| m.to_string())
             .collect(),
-        set_header: None,
+        set_header,
     })
 }
 
@@ -352,11 +385,67 @@ mod tests {
         assert_eq!(b.name, "notion");
         assert_eq!(b.environment_variable, "NOTION_API_KEY");
         assert_eq!(b.allowed_hosts, vec!["api.notion.com", "files.notion.com"]);
+        assert_eq!(b.set_header, None);
         let b = parse_credential_flag("oauth=REFRESH@auth.example.com:body").unwrap();
         assert!(b.injection_location.body);
         assert_eq!(b.allowed_hosts, vec!["auth.example.com"]);
+        assert_eq!(b.set_header, None);
         assert!(parse_credential_flag("notion=NOTION_API_KEY").is_err());
         assert!(parse_credential_flag("=X@h").is_err());
+    }
+
+    #[test]
+    fn credential_flag_sets_a_header_from_the_complete_host_value() {
+        let binding = parse_credential_flag(
+            "github=GITHUB_AUTH@github.com,*.github.com:set-header=Authorization",
+        )
+        .unwrap();
+
+        assert_eq!(binding.set_header.as_deref(), Some("authorization"));
+        assert!(!binding.injection_location.body);
+        assert_eq!(binding.environment_variable, "GITHUB_AUTH");
+    }
+
+    #[test]
+    fn credential_flag_accepts_body_and_set_header_in_either_order() {
+        for spec in [
+            "oauth=TOKEN@auth.example.com:body:set-header=authorization",
+            "oauth=TOKEN@auth.example.com:set-header=authorization:body",
+        ] {
+            let binding = parse_credential_flag(spec).unwrap();
+            assert!(binding.injection_location.body);
+            assert_eq!(binding.set_header.as_deref(), Some("authorization"));
+        }
+    }
+
+    #[test]
+    fn credential_flag_rejects_empty_unknown_and_duplicate_modifiers() {
+        let empty = parse_credential_flag("token=TOKEN@api.example.com:").unwrap_err();
+        assert!(empty.contains("modifier is empty"), "{empty}");
+        let empty_header =
+            parse_credential_flag("token=TOKEN@api.example.com:set-header=").unwrap_err();
+        assert!(
+            empty_header.contains("non-empty header name"),
+            "{empty_header}"
+        );
+        let unknown = parse_credential_flag("token=TOKEN@api.example.com:query").unwrap_err();
+        assert!(
+            unknown.contains("unknown credential modifier :query"),
+            "{unknown}"
+        );
+        let duplicate = parse_credential_flag("token=TOKEN@api.example.com:body:body").unwrap_err();
+        assert!(
+            duplicate.contains(":body appears more than once"),
+            "{duplicate}"
+        );
+        let duplicate_header = parse_credential_flag(
+            "token=TOKEN@api.example.com:set-header=authorization:set-header=x-api-key",
+        )
+        .unwrap_err();
+        assert!(
+            duplicate_header.contains(":set-header=HEADER appears more than once"),
+            "{duplicate_header}"
+        );
     }
 
     #[test]

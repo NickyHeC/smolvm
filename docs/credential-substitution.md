@@ -33,7 +33,7 @@ placeholder, and the exact hosts it may be sent to. It never carries the value.
 Command line (repeatable, implies `--net`):
 
 ```sh
---credential NAME=ENV_VAR@HOST[,HOST...][:body]
+--credential NAME=ENV_VAR@HOST[,HOST...][:body][:set-header=HEADER]
 ```
 
 Smolfile:
@@ -72,6 +72,9 @@ https://auth.example.com/token` sends the host's current file value as one
 percent-encoded form field. The same placeholder in a header and the form body
 of one request is allowed; two different placeholders are refused.
 
+The CLI accepts `:body` and `:set-header=HEADER` together in either order:
+`:body:set-header=HEADER` or `:set-header=HEADER:body`.
+
 API (`POST /api/v1/machines`): the same object under `credentials`, with
 `injection_location: { "header": true, "body": true }` for form-body
 substitution (omit `body` to keep the default).
@@ -93,9 +96,22 @@ Rules checked at create:
 A binding with `set_header` sets that request header to the credential's
 value on every request to its hosts with its methods, replacing whatever the
 guest sent. The value is the whole header value, `Bearer …` or `Basic …`
-included. The guest needs no placeholder and holds nothing: this is the shape
-of a firewall that brokers credentials by domain, for clients you cannot
-point at a placeholder (a `git clone` of a private repository, say).
+included. With the CLI form, `ENV_VAR` still receives an unused opaque
+placeholder in the guest; the complete secret value and resolved header remain
+on the host. This is the shape of a firewall that brokers credentials by
+domain, for clients you cannot point at a placeholder (a `git clone` of a
+private repository, say).
+
+On the CLI, add `:set-header=HEADER` to the binding. For example, this reads
+the complete `GITHUB_AUTH` value from the host environment when the machine
+starts and injects it as the `Authorization` header for requests to
+`api.github.com`; the guest never receives that secret:
+
+```sh
+smolvm machine create --name github --image alpine:3.20 \
+  --credential github=GITHUB_AUTH@api.github.com:set-header=authorization
+GITHUB_AUTH='Bearer ghp_…' smolvm machine start --name github
+```
 
 ```toml
 [[network.credentials]]
