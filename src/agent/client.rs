@@ -3248,13 +3248,19 @@ impl AgentClient {
             bytes_sent += filled as u64;
             let done = bytes_sent == total_size;
 
-            let resp = self.request_with_write_idle_timeout(
+            let mut resp = self.request_with_write_idle_timeout(
                 &AgentRequest::FileWriteChunk {
                     data: buf[..filled].to_vec(),
                     done,
                 },
                 transfer_write_timeout,
             )?;
+            // The last chunk syncs and installs the file, which the agent
+            // reports as progress while it lasts; each frame restarts the
+            // read timeout.
+            while done && matches!(resp, AgentResponse::Progress { .. }) {
+                resp = self.receive()?;
+            }
             expect_ok(resp, "stream write chunk")?;
             on_progress(bytes_sent);
 
@@ -4329,6 +4335,52 @@ mod upload_reader_tests {
         let reader = Cursor::new(vec![42; total + 13]);
         AgentClient::from_stream(client_stream)
             .write_file_from_reader("/workspace/file", reader, total as u64, None)
+            .unwrap();
+        server.join().unwrap();
+    }
+
+    // The last chunk's sync and install can outlast the frame timeout; the
+    // agent says so with progress frames, which the upload waits through.
+    #[test]
+    fn progress_while_the_last_chunk_finalizes_does_not_fail_the_upload() {
+        let (client_stream, mut server_stream) = UdsStream::pair().unwrap();
+        let total = FILE_WRITE_CHUNK_SIZE + 7;
+        let server = std::thread::spawn(move || loop {
+            let mut header = [0; 4];
+            server_stream.read_exact(&mut header).unwrap();
+            let mut frame = vec![0; u32::from_be_bytes(header) as usize];
+            server_stream.read_exact(&mut frame).unwrap();
+            let request: Envelope<AgentRequest> = serde_json::from_slice(&frame).unwrap();
+            let done = matches!(
+                request.body,
+                AgentRequest::FileWriteChunk { done: true, .. }
+            );
+            if done {
+                for _ in 0..3 {
+                    let progress = AgentResponse::Progress {
+                        message: "finalizing file write".into(),
+                        percent: None,
+                        layer: None,
+                    };
+                    server_stream
+                        .write_all(&encode_message(&progress).unwrap())
+                        .unwrap();
+                }
+            }
+            server_stream
+                .write_all(&encode_message(&AgentResponse::Ok { data: None }).unwrap())
+                .unwrap();
+            if done {
+                break;
+            }
+        });
+        AgentClient::from_stream(client_stream)
+            .write_file_from_reader(
+                "/workspace/file",
+                Cursor::new(vec![7; total]),
+                total as u64,
+                None,
+            )
             .unwrap();
         server.join().unwrap();
     }
