@@ -4235,23 +4235,13 @@ impl OverlaySetup {
 // Mounted overlays must be written through merged, never their live upperdir.
 fn refresh_overlay_resolver(root: &Path) -> Result<()> {
     let path = root.join("etc/resolv.conf");
-    let written = open_overlay_etc_file(
-        root,
-        c"resolv.conf",
-        libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
-    )
-    .and_then(|file| match file {
-        Some(mut file) => file
-            .write_all(overlay_resolv_conf_contents().as_bytes())
-            .map(|()| true),
-        None => Ok(false),
-    });
-    match written {
+    match write_overlay_resolver(root) {
         Ok(true) => Ok(()),
         Ok(false) => {
-            // A symlinked resolv.conf (systemd-resolved's stub, for one) is the
-            // image's own resolver setup: keep it rather than write through a
-            // link the agent would resolve against its own root.
+            // A symlinked resolv.conf that resolves inside the image (an image
+            // running systemd-resolved, say) is the image's own resolver setup:
+            // keep it rather than write through a link the agent would resolve
+            // against its own root.
             info!(path = %path.display(), "resolv.conf is a symlink; leaving the image's resolver in place");
             Ok(())
         }
@@ -4263,6 +4253,111 @@ fn refresh_overlay_resolver(root: &Path) -> Result<()> {
             )))
         }
     }
+}
+
+/// Write the resolver to `root/etc/resolv.conf`, or `Ok(false)` when the image
+/// keeps its own: a symlinked `etc`, or a symlinked `resolv.conf` whose target
+/// exists inside `root`. A dangling link (installing `systemd-resolved` in a
+/// container leaves one pointing at a stub nothing creates) would leave the
+/// workload with no DNS, so it is replaced by the file, as a container runtime
+/// that owns `resolv.conf` would; the link itself is removed, never followed.
+fn write_overlay_resolver(root: &Path) -> std::io::Result<bool> {
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+    let root_dir = std::fs::File::open(root)?;
+    // SAFETY: `root_dir` is open and the path is a NUL-terminated literal.
+    let etc = unsafe {
+        libc::openat(
+            root_dir.as_raw_fd(),
+            c"etc".as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if etc < 0 {
+        let error = std::io::Error::last_os_error();
+        return match error.raw_os_error() {
+            Some(libc::ELOOP | libc::ENOTDIR) => Ok(false),
+            _ => Err(error),
+        };
+    }
+    // SAFETY: `etc` was just opened here and is owned from now on.
+    let etc = unsafe { std::fs::File::from_raw_fd(etc) };
+    // Look before opening: overlayfs answers an O_NOFOLLOW create on a
+    // dangling link with ENOENT, not the ELOOP other filesystems give.
+    // SAFETY: an all-zero `stat` is a valid out-parameter.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: `etc` is open, the name is NUL-terminated, `st` is writable.
+    let found = unsafe {
+        libc::fstatat(
+            etc.as_raw_fd(),
+            c"resolv.conf".as_ptr(),
+            &mut st,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } == 0;
+    if found && st.st_mode & libc::S_IFMT == libc::S_IFLNK {
+        if link_resolves_in_root(&root_dir, c"etc/resolv.conf") {
+            return Ok(false);
+        }
+        // SAFETY: `etc` is open and the name is NUL-terminated.
+        if unsafe { libc::unlinkat(etc.as_raw_fd(), c"resolv.conf".as_ptr(), 0) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    // SAFETY: `etc` is open and the name is NUL-terminated.
+    let fd = unsafe {
+        libc::openat(
+            etc.as_raw_fd(),
+            c"resolv.conf".as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o644 as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        let error = std::io::Error::last_os_error();
+        // A link that appeared since the look is the image's to keep.
+        return match error.raw_os_error() {
+            Some(libc::ELOOP) => Ok(false),
+            _ => Err(error),
+        };
+    }
+    // SAFETY: `fd` was just opened here and is owned from now on.
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    file.write_all(overlay_resolv_conf_contents().as_bytes())?;
+    Ok(true)
+}
+
+/// Whether `path` names an existing file when its links are resolved with
+/// `root` as `/`, so an absolute link means the image's path, not the agent's.
+#[cfg(target_os = "linux")]
+fn link_resolves_in_root(root: &std::fs::File, path: &std::ffi::CStr) -> bool {
+    use std::os::unix::io::AsRawFd;
+    // SAFETY: an all-zero `open_how` is valid; the fields are set below.
+    let mut how: libc::open_how = unsafe { std::mem::zeroed() };
+    how.flags = (libc::O_PATH | libc::O_CLOEXEC) as u64;
+    how.resolve = libc::RESOLVE_IN_ROOT;
+    // SAFETY: `root` is open, `path` is NUL-terminated and `how` is a valid
+    // `open_how` of the size passed.
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            root.as_raw_fd(),
+            path.as_ptr(),
+            &how as *const libc::open_how,
+            std::mem::size_of::<libc::open_how>(),
+        )
+    };
+    if fd >= 0 {
+        // SAFETY: `fd` was just opened here and is closed once.
+        unsafe { libc::close(fd as libc::c_int) };
+        return true;
+    }
+    // Without openat2 the link cannot be resolved safely; keep it, as before.
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOSYS)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn link_resolves_in_root(_root: &std::fs::File, _path: &std::ffi::CStr) -> bool {
+    true
 }
 
 /// Open `etc/<name>` under an overlay root without following a symlink at
@@ -7713,9 +7808,10 @@ mod tests {
             .ends_with("127.0.1.1\tworker-2\n"));
     }
 
-    // An image's symlinked resolv.conf or hosts (systemd-resolved's stub, or a
-    // link into its own /run) is kept, never written through: the agent would
-    // resolve the link against its own root. A symlinked etc is refused too.
+    // An image's symlinked hosts, or a symlinked resolv.conf that resolves
+    // inside the image (systemd-resolved's stub once it runs), is kept and
+    // never written through: the agent would resolve the link against its own
+    // root. A symlinked etc is refused too.
     #[test]
     fn symlinked_resolver_and_hosts_are_kept_and_never_written_through() {
         let _guard = env_lock().lock().unwrap();
@@ -7724,28 +7820,31 @@ mod tests {
         std::fs::write(&outside, "agent's own\n").unwrap();
         let root = tmp.path().join("root");
         std::fs::create_dir_all(root.join("etc")).unwrap();
-        for name in ["resolv.conf", "hosts"] {
-            std::os::unix::fs::symlink(&outside, root.join("etc").join(name)).unwrap();
-        }
+        std::fs::create_dir_all(root.join("run/systemd/resolve")).unwrap();
+        std::fs::write(
+            root.join("run/systemd/resolve/stub-resolv.conf"),
+            "nameserver 127.0.0.53\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            "/run/systemd/resolve/stub-resolv.conf",
+            root.join("etc/resolv.conf"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("etc/hosts")).unwrap();
         refresh_overlay_resolver(&root).unwrap();
         ensure_overlay_hostname(&root, "worker-1").unwrap();
         assert_eq!(std::fs::read_to_string(&outside).unwrap(), "agent's own\n");
+        assert_eq!(
+            std::fs::read_to_string(root.join("run/systemd/resolve/stub-resolv.conf")).unwrap(),
+            "nameserver 127.0.0.53\n"
+        );
         for name in ["resolv.conf", "hosts"] {
             assert!(std::fs::symlink_metadata(root.join("etc").join(name))
                 .unwrap()
                 .file_type()
                 .is_symlink());
         }
-
-        // A dangling link, the usual shape before systemd-resolved runs.
-        let dangling = tmp.path().join("dangling");
-        std::fs::create_dir_all(dangling.join("etc")).unwrap();
-        std::os::unix::fs::symlink(
-            "/run/systemd/resolve/stub-resolv.conf",
-            dangling.join("etc/resolv.conf"),
-        )
-        .unwrap();
-        refresh_overlay_resolver(&dangling).unwrap();
 
         let linked_etc = tmp.path().join("linked-etc");
         std::fs::create_dir_all(&linked_etc).unwrap();
@@ -7754,6 +7853,41 @@ mod tests {
         ensure_overlay_hostname(&linked_etc, "worker-1").unwrap();
         assert!(!tmp.path().join("resolv.conf").exists());
         assert!(!tmp.path().join("hosts").exists());
+    }
+
+    // Installing systemd-resolved in a container leaves resolv.conf a link to
+    // a stub nothing creates. It is replaced by the resolver, never followed:
+    // an absolute link is the image's path, so one naming an agent file is
+    // dangling in the image and the agent file is left alone.
+    #[test]
+    fn a_dangling_resolver_link_is_replaced_without_following_it() {
+        let _guard = env_lock().lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tmp.path().join("agent-file");
+        std::fs::write(&outside, "agent's own\n").unwrap();
+        for (name, target) in [
+            (
+                "relative",
+                std::path::PathBuf::from("../run/systemd/resolve/stub-resolv.conf"),
+            ),
+            ("absolute", outside.clone()),
+        ] {
+            let root = tmp.path().join(name);
+            std::fs::create_dir_all(root.join("etc")).unwrap();
+            std::os::unix::fs::symlink(&target, root.join("etc/resolv.conf")).unwrap();
+            refresh_overlay_resolver(&root).unwrap();
+            let resolver = root.join("etc/resolv.conf");
+            assert!(
+                std::fs::symlink_metadata(&resolver).unwrap().is_file(),
+                "{name}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&resolver).unwrap(),
+                overlay_resolv_conf_contents()
+            );
+            assert!(!root.join("run").exists(), "{name}");
+        }
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "agent's own\n");
     }
 
     #[test]
