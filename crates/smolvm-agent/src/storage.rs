@@ -7860,7 +7860,7 @@ mod tests {
     // an absolute link is the image's path, so one naming an agent file is
     // dangling in the image and the agent file is left alone.
     #[test]
-    fn a_dangling_resolver_link_is_replaced_without_following_it() {
+    fn dangling_resolver_links_follow_platform_resolution_policy() {
         let _guard = env_lock().lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let outside = tmp.path().join("agent-file");
@@ -7877,14 +7877,25 @@ mod tests {
             std::os::unix::fs::symlink(&target, root.join("etc/resolv.conf")).unwrap();
             refresh_overlay_resolver(&root).unwrap();
             let resolver = root.join("etc/resolv.conf");
-            assert!(
-                std::fs::symlink_metadata(&resolver).unwrap().is_file(),
-                "{name}"
-            );
-            assert_eq!(
-                std::fs::read_to_string(&resolver).unwrap(),
-                overlay_resolv_conf_contents()
-            );
+            if cfg!(target_os = "linux") {
+                assert!(
+                    std::fs::symlink_metadata(&resolver).unwrap().is_file(),
+                    "{name}"
+                );
+                assert_eq!(
+                    std::fs::read_to_string(&resolver).unwrap(),
+                    overlay_resolv_conf_contents()
+                );
+            } else {
+                assert!(
+                    std::fs::symlink_metadata(&resolver)
+                        .unwrap()
+                        .file_type()
+                        .is_symlink(),
+                    "{name}"
+                );
+                assert_eq!(std::fs::read_link(&resolver).unwrap(), target, "{name}");
+            }
             assert!(!root.join("run").exists(), "{name}");
         }
         assert_eq!(std::fs::read_to_string(&outside).unwrap(), "agent's own\n");
