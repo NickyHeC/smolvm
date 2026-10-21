@@ -518,6 +518,48 @@ impl CrunCommand {
         c
     }
 
+    /// [`exec_with_process`](Self::exec_with_process) for a TTY exec:
+    /// `crun exec --tty --console-socket <sock> --process <file> <id>`. The
+    /// process file sets `terminal: true`; crun hands the PTY master back over
+    /// the console socket exactly as for [`Self::exec_with_console`].
+    pub fn exec_with_process_console(
+        container_id: &str,
+        process_file: &Path,
+        console_socket: &Path,
+    ) -> Self {
+        let mut c = Self::new();
+        c.cmd.arg("exec").arg("--tty");
+        c.cmd.arg("--console-socket").arg(console_socket);
+        c.cmd.arg("--process").arg(process_file);
+        c.pending_positionals = vec![container_id.to_string()];
+        c.cmd.stdin(Stdio::null());
+        c.cmd.stdout(Stdio::null());
+        c.cmd.stderr(Stdio::piped());
+        c
+    }
+
+    /// [`exec_detached_with_log`](Self::exec_detached_with_log) from a full OCI
+    /// process file, so a detached workload keeps its user's supplementary
+    /// groups too.
+    pub fn exec_detached_with_process(
+        container_id: &str,
+        process_file: &Path,
+        pid_file: Option<&Path>,
+        log: Option<&Path>,
+    ) -> Self {
+        let mut c = Self::new();
+        if let Some(log) = log.filter(|log| prepare_log(log)) {
+            c.cmd.arg("--log").arg(log);
+        }
+        c.cmd.arg("exec").arg("--detach");
+        if let Some(pf) = pid_file {
+            c.cmd.arg("--pid-file").arg(pf);
+        }
+        c.cmd.arg("--process").arg(process_file);
+        c.pending_positionals = vec![container_id.to_string()];
+        c
+    }
+
     /// Kill a container: `crun kill <id> <signal>`
     pub fn kill(container_id: &str, signal: &str) -> Self {
         let mut c = Self::new();

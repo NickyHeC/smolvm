@@ -37,21 +37,66 @@ async fn machine_target(state: &ApiState, id: &str) -> Result<WorkloadTarget, Ap
         }))
 }
 
+/// Ownership and permission bits for an uploaded file. Without them a file lands
+/// as the agent writes it (root, 0644), which a workload running as another user
+/// (`runner`, `node`) can read but not own; `uid`/`gid` give it to that user.
+#[derive(Debug, Default, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct UploadOptions {
+    /// Permission bits in octal, such as `0755` or `644`.
+    pub mode: Option<String>,
+    /// Owner uid inside the machine.
+    pub uid: Option<u32>,
+    /// Owner gid inside the machine.
+    pub gid: Option<u32>,
+}
+
+impl UploadOptions {
+    fn into_meta(self) -> Result<crate::agent::FileWriteMeta, ApiError> {
+        let mode = match self
+            .mode
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+        {
+            Some(m) => Some(
+                u32::from_str_radix(m.trim_start_matches("0o"), 8)
+                    .ok()
+                    .filter(|bits| *bits <= 0o7777)
+                    .ok_or_else(|| {
+                        ApiError::BadRequest(format!(
+                            "mode must be octal permission bits such as 0644, got '{m}'"
+                        ))
+                    })?,
+            ),
+            None => None,
+        };
+        Ok(crate::agent::FileWriteMeta {
+            mode,
+            uid: self.uid,
+            gid: self.gid,
+        })
+    }
+}
+
 /// Upload a file to a machine.
 ///
 /// Writes the request body as a file at the specified path inside the VM.
-/// Creates parent directories automatically.
+/// Creates parent directories automatically. `?mode=`, `?uid=` and `?gid=` set
+/// the file's permission bits and owner (see [`UploadOptions`]).
 #[utoipa::path(
     put,
     path = "/api/v1/machines/{id}/files/{path}",
     tag = "Files",
     params(
         ("id" = String, Path, description = "Machine name"),
-        ("path" = String, Path, description = "File path inside the VM (e.g., workspace/script.py)")
+        ("path" = String, Path, description = "File path inside the VM (e.g., workspace/script.py)"),
+        UploadOptions
     ),
     request_body(content = Vec<u8>, content_type = "application/octet-stream"),
     responses(
         (status = 200, description = "File uploaded", body = FileUploadResponse),
+        (status = 400, description = "Bad mode, uid or gid"),
         (status = 404, description = "Machine not found"),
         (status = 500, description = "Write failed")
     )
@@ -59,11 +104,13 @@ async fn machine_target(state: &ApiState, id: &str) -> Result<WorkloadTarget, Ap
 pub async fn upload_file(
     State(state): State<Arc<ApiState>>,
     Path((id, file_path)): Path<(String, String)>,
+    axum::extract::Query(opts): axum::extract::Query<UploadOptions>,
     trace_id: Option<axum::Extension<TraceId>>,
     headers: axum::http::HeaderMap,
     body: axum::body::Body,
 ) -> Result<Json<FileUploadResponse>, ApiError> {
     let tid = trace_id.map(|t| t.0 .0.clone());
+    let meta = opts.into_meta()?;
     let limit = crate::api::MAX_FILE_UPLOAD_BYTES as u64;
     let too_large =
         || ApiError::PayloadTooLarge(format!("file exceeds the {} MiB upload limit", limit >> 20));
@@ -122,9 +169,11 @@ pub async fn upload_file(
             // once all of it is written, so a body that stops short leaves
             // nothing at the path.
             UploadSource::Streamed(len, reader) => {
-                c.write_file_from_reader(&guest_path, reader, len, None)
+                c.write_file_from_reader_with_progress(&guest_path, reader, len, meta, |_| {})
             }
-            UploadSource::Whole(bytes) => c.write_file(&guest_path, &bytes, None),
+            UploadSource::Whole(bytes) => {
+                c.write_file_with_progress(&guest_path, &bytes, meta, |_| {})
+            }
         }
     })
     .await?;

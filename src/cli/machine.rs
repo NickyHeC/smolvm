@@ -3285,6 +3285,38 @@ mod tests {
             forkpoint_timeout(plain, batch.wait_ready, batch.ready_timeout),
             Some(Duration::from_secs(120))
         );
+        // --no-wait-ready is the batch's way out of the boundary wait, like the API's default
+        let direct = TestMachineCli::parse_from([
+            "machine",
+            "branch",
+            "--from",
+            "base",
+            "--count",
+            "4",
+            "--name-prefix",
+            "w",
+            "--no-wait-ready",
+        ]);
+        let MachineCmd::Branch(direct) = direct.command else {
+            panic!("expected machine branch command");
+        };
+        assert!(direct.no_wait_ready && !direct.wait_ready && !direct.hold);
+        assert!(
+            TestMachineCli::try_parse_from([
+                "machine",
+                "branch",
+                "--from",
+                "base",
+                "--count",
+                "4",
+                "--name-prefix",
+                "w",
+                "--no-wait-ready",
+                "--hold",
+            ])
+            .is_err(),
+            "--no-wait-ready and --hold contradict each other"
+        );
         // A plain branch waits only when asked; every batch shape waits, so a
         // one-child batch is released at the boundary like any other.
         assert_eq!(
@@ -5644,7 +5676,8 @@ pub struct ForkCmd {
     pub clone: Option<String>,
 
     /// Number of children to create from one checkpoint. Batch branches wait for the
-    /// standard `smolvm-branch-ready` boundary automatically. Direct batches
+    /// standard `smolvm-branch-ready` boundary automatically (`--no-wait-ready`
+    /// checkpoints the source where it is instead, as the API does). Direct batches
     /// receive one shared `SMOLVM_BRANCH_BATCH_ID` and `SMOLVM_BRANCH_BATCH_SIZE`;
     /// held slots remain independent until assigned by their controller.
     #[arg(long, default_value = "1", value_name = "COUNT")]
@@ -5665,6 +5698,14 @@ pub struct ForkCmd {
     /// are installed.
     #[arg(long)]
     pub wait_ready: bool,
+
+    /// Checkpoint the source where it is now instead of waiting for its workload to
+    /// run `smolvm-branch-ready`: the host decides the branch point, which is what a
+    /// workload that never declares one (a CI runner, a server) needs, and the
+    /// default of the API's `/branches/batch`. Children still receive their identity
+    /// and branch environment at boot.
+    #[arg(long, conflicts_with_all = ["wait_ready", "hold"])]
+    pub no_wait_ready: bool,
 
     /// Keep each child parked at the inherited branch point as an already-booted
     /// pool slot. Assign and release a slot later with `machine branch-release`.
@@ -5813,11 +5854,15 @@ impl ForkCmd {
             .into_iter()
             .collect();
         let count = self.count.get();
-        let wait_ready = forkpoint_timeout(
-            is_plain_branch(count, self.name_prefix.is_some(), self.hold),
-            self.wait_ready,
-            self.ready_timeout,
-        );
+        let wait_ready = if self.no_wait_ready {
+            None
+        } else {
+            forkpoint_timeout(
+                is_plain_branch(count, self.name_prefix.is_some(), self.hold),
+                self.wait_ready,
+                self.ready_timeout,
+            )
+        };
         if count > 1024 {
             return Err(smolvm::Error::config(
                 "branch",
