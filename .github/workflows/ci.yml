@@ -9,6 +9,13 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # CI builds the release profile only to check it compiles, warns nothing and passes its tests; that binary is never
+  # shipped. Thin LTO with 16 codegen units keeps cross-crate optimisation but runs it in parallel: an incremental
+  # release build of the main crate drops from ~300 s (fat LTO, 1 codegen unit, one core) to a fraction of that.
+  # Shipped binaries come from release.yml / scripts/build-dist.sh, which do not read this file and keep the fat-LTO
+  # profile in Cargo.toml.
+  CARGO_PROFILE_RELEASE_LTO: thin
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
 jobs:
   # ==========================================================================
