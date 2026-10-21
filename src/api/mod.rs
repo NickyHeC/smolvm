@@ -27,6 +27,7 @@ pub mod error;
 pub mod guest_rollout;
 pub mod handlers;
 pub mod inflight;
+pub mod memory_pressure;
 pub mod pool_controller;
 pub mod progress;
 pub mod resize_controller;

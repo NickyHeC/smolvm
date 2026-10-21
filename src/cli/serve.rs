@@ -550,6 +550,10 @@ impl ServeStartCmd {
             reason: e.to_string(),
         })?;
 
+        // The service outlives its machines when the host is out of memory.
+        #[cfg(target_os = "linux")]
+        smolvm::process::protect_service_from_oom();
+
         // Spawn supervisor task
         let supervisor_state = state.clone();
         let supervisor_shutdown = shutdown_rx.clone();
@@ -569,6 +573,12 @@ impl ServeStartCmd {
             controller.run().await;
         });
         let resize_controller_handle = tokio::spawn(smolvm::api::resize_controller::run(
+            state.clone(),
+            shutdown_rx.clone(),
+        ));
+        // Branch children that outgrow the host are paused, newest first, and
+        // resumed when memory comes back (see api::memory_pressure).
+        let memory_pressure_handle = tokio::spawn(smolvm::api::memory_pressure::run(
             state.clone(),
             shutdown_rx.clone(),
         ));
@@ -649,6 +659,9 @@ impl ServeStartCmd {
         // runtime/agent calls finish. Do not drain/detach underneath that work.
         if let Err(error) = resize_controller_handle.await {
             tracing::error!(%error, "resize recovery controller failed during shutdown");
+        }
+        if let Err(error) = memory_pressure_handle.await {
+            tracing::error!(%error, "memory pressure guard failed during shutdown");
         }
         let mut pool_controller_handle = pool_controller_handle;
         match tokio::time::timeout(

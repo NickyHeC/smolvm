@@ -920,6 +920,10 @@ pub struct MachineInfo {
     /// Current state ("created", "running", "stopped").
     #[schema(example = "running")]
     pub state: String,
+    /// Why the host put the machine in this state when it was not the user:
+    /// a branch child the memory pressure guard paused says so here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_reason: Option<String>,
     /// Number of vCPUs.
     #[schema(example = 2)]
     pub cpus: u8,

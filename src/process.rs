@@ -408,6 +408,43 @@ const CGROUP_PIDS_MAX: u32 = 1024;
 /// enforced by `krun_set_vm_config`, not the primary memory control.
 const VMM_MEM_OVERHEAD_MIB: u64 = 768;
 
+/// The `oom_score_adj` a VMM runs with, so that when the HOST runs out of
+/// memory the kernel's global OOM killer takes a branch child before anything
+/// else and a branch source last: a source's death kills every child that
+/// shares its RAM, while a child is one disposable unit of work. Plain
+/// machines keep 0. `SMOLVM_OOM_VICTIM_ORDER=0` leaves every score at 0.
+pub fn oom_score_adj_for(source: bool, clone: bool) -> i32 {
+    if std::env::var("SMOLVM_OOM_VICTIM_ORDER").as_deref() == Ok("0") {
+        return 0;
+    }
+    match (clone, source) {
+        (true, _) => 500,
+        (false, true) => -500,
+        (false, false) => 0,
+    }
+}
+
+/// Write this process's `oom_score_adj`. Lowering it below 0 needs
+/// CAP_SYS_RESOURCE (the service runs privileged on a node; a user's local
+/// service may not), so a refusal is for the caller to report, not fatal.
+#[cfg(target_os = "linux")]
+pub fn set_own_oom_score_adj(adj: i32) -> std::io::Result<()> {
+    std::fs::write("/proc/self/oom_score_adj", adj.to_string())
+}
+
+/// The service itself is the last thing the kernel should kill on a full host:
+/// with it gone no machine can be paused, stopped or reported. -900 keeps it
+/// killable as a last resort.
+#[cfg(target_os = "linux")]
+pub fn protect_service_from_oom() {
+    if std::env::var("SMOLVM_OOM_VICTIM_ORDER").as_deref() == Ok("0") {
+        return;
+    }
+    if let Err(e) = set_own_oom_score_adj(-900) {
+        tracing::debug!(error = %e, "could not lower the service's oom_score_adj (needs CAP_SYS_RESOURCE)");
+    }
+}
+
 /// Resolve this process's cgroup v2 directory from `/proc/self/cgroup`.
 ///
 /// Returns `None` on a cgroup v1 / hybrid host (no unified `0::` line) or if the
@@ -5331,5 +5368,26 @@ mod tests {
         let _ = child.kill();
         let _ = child.wait();
         assert!(!cmdline_contains(pid, &token), "a dead PID must not match");
+    }
+}
+
+#[cfg(test)]
+mod oom_victim_order_tests {
+    use super::oom_score_adj_for;
+
+    #[test]
+    fn children_go_first_sources_last_others_untouched() {
+        assert_eq!(
+            oom_score_adj_for(false, true),
+            500,
+            "a restored branch child"
+        );
+        assert_eq!(
+            oom_score_adj_for(true, true),
+            500,
+            "a child that is itself branchable is still a child"
+        );
+        assert_eq!(oom_score_adj_for(true, false), -500, "a branch source");
+        assert_eq!(oom_score_adj_for(false, false), 0, "a plain machine");
     }
 }
