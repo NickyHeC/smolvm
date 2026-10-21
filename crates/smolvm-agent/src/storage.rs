@@ -1522,7 +1522,7 @@ const ARCHIVE_SCRATCH_DIR_ENV: &str = "SMOLVM_ARCHIVE_SCRATCH_DIR";
 ///   2. `/storage/tmp`, the storage disk;
 ///   3. the default temp dir, when the storage disk is absent (host-side unit
 ///      tests).
-fn archive_scratch_dir() -> PathBuf {
+pub(crate) fn archive_scratch_dir() -> PathBuf {
     if let Ok(dir) = std::env::var(ARCHIVE_SCRATCH_DIR_ENV) {
         let dir = dir.trim();
         if !dir.is_empty() {

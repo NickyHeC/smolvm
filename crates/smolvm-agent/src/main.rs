@@ -3255,8 +3255,13 @@ fn handle_file_write(
 /// ever appears at the target path.
 struct WriteSession {
     /// User-requested target path inside the guest.
-    target: std::path::PathBuf,
-    /// Staging file we append to; renamed to `target` on done.
+    guest_path: String,
+    /// Host-resolved target path when staging beside the destination in the
+    /// VM namespace (`None` when a running container was already selected at
+    /// `FileWriteBegin`).
+    target: Option<std::path::PathBuf>,
+    /// Staging file we append to; renamed to `target` or piped into the
+    /// container on done.
     tmp_path: std::path::PathBuf,
     /// Handle we keep open for the lifetime of the session.
     tmp_file: std::fs::File,
@@ -3276,33 +3281,36 @@ struct WriteSession {
 }
 
 impl WriteSession {
-    /// Open a fresh staging file for `target`.
+    /// Open a fresh staging file for `guest_path`.
     fn open(
-        target: std::path::PathBuf,
+        guest_path: String,
+        target: Option<std::path::PathBuf>,
         mode: Option<u32>,
         uid: Option<u32>,
         gid: Option<u32>,
         total_size: u64,
         root: io_target::IoRoot,
     ) -> std::io::Result<Self> {
-        if let Some(parent) = target.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
+        let file_name = std::path::Path::new(&guest_path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let tmp_name = format!("{}{}", file_name, staging_suffix());
+        let tmp_path = match &target {
+            Some(target) => {
+                if let Some(parent) = target.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                }
+                target
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .map(|p| p.join(&tmp_name))
+                    .unwrap_or_else(|| std::path::PathBuf::from(&tmp_name))
             }
-        }
-        let tmp_name = format!(
-            "{}{}",
-            target
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            staging_suffix()
-        );
-        let tmp_path = target
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map(|p| p.join(&tmp_name))
-            .unwrap_or_else(|| std::path::PathBuf::from(&tmp_name));
+            None => storage::archive_scratch_dir().join(&tmp_name),
+        };
 
         let tmp_file = std::fs::OpenOptions::new()
             .create_new(true)
@@ -3310,6 +3318,7 @@ impl WriteSession {
             .truncate(true)
             .open(&tmp_path)?;
         Ok(Self {
+            guest_path,
             target,
             tmp_path,
             tmp_file,
@@ -3384,69 +3393,82 @@ impl WriteSession {
         // namespace — finalize through the ns helper there, mirroring the
         // single-shot path (writing here would land in the overlay's upper
         // beneath a live overlayfs, invisible to the workload: BUG-240's
-        // streaming twin). The staged bytes are piped, never re-buffered.
-        match std::fs::File::open(&self.tmp_path) {
-            Ok(mut staged) => {
-                if let nsfile::GuestNs::Container(ns) = self.root.namespace() {
-                    // Session Drop still cleans the staging file.
-                    return match ns.write_reader(
-                        &self.target.to_string_lossy(),
-                        &mut staged,
-                        self.mode,
-                        self.uid,
-                        self.gid,
-                    ) {
-                        Ok(()) => {
-                            info!(
-                                path = %self.target.display(),
-                                size = self.bytes_written,
-                                "file written into workload container"
-                            );
-                            AgentResponse::Ok { data: None }
-                        }
-                        Err(e) => AgentResponse::error(
-                            format!(
-                                "failed to write {} in the workload container: {}",
-                                self.target.display(),
-                                e
-                            ),
-                            error_codes::FILE_IO_FAILED,
-                        ),
-                    };
+        // streaming twin). Pass `guest_path` (not the host-resolved overlay
+        // path) so the helper resolves mounts and symlinks inside the
+        // container's mount namespace. The staged bytes are piped, never
+        // re-buffered.
+        if let nsfile::GuestNs::Container(ns) = self.root.namespace() {
+            let mut staged = match std::fs::File::open(&self.tmp_path) {
+                Ok(f) => f,
+                Err(e) => {
+                    return AgentResponse::error(
+                        format!("failed to reopen staging file: {}", e),
+                        error_codes::FILE_IO_FAILED,
+                    );
+                }
+            };
+            // Session Drop still cleans the staging file.
+            return match ns.write_reader(
+                &self.guest_path,
+                &mut staged,
+                self.mode,
+                self.uid,
+                self.gid,
+            ) {
+                Ok(()) => {
+                    info!(
+                        path = %self.guest_path,
+                        size = self.bytes_written,
+                        "file written into workload container"
+                    );
+                    AgentResponse::Ok { data: None }
+                }
+                Err(e) => AgentResponse::error(
+                    format!(
+                        "failed to write {} in the workload container: {}",
+                        self.guest_path, e
+                    ),
+                    error_codes::FILE_IO_FAILED,
+                ),
+            };
+        }
+        let target = match self.target.clone() {
+            Some(t) => t,
+            None => {
+                match resolve_guest_io_path(&self.guest_path, FilePathAccess::Write, &self.root) {
+                    Ok(p) => p,
+                    Err(resp) => return resp,
                 }
             }
-            Err(e) => {
-                return AgentResponse::error(
-                    format!("failed to reopen staging file: {}", e),
-                    error_codes::FILE_IO_FAILED,
-                );
-            }
+        };
+        if let Err(resp) = ensure_parent_dir(&target) {
+            return resp;
         }
         // Disarm Drop before rename; if the rename fails we'll
         // re-arm below by restoring the path.
         let tmp = std::mem::take(&mut self.tmp_path);
-        if let Err(e) = std::fs::rename(&tmp, &self.target) {
+        if let Err(e) = std::fs::rename(&tmp, &target) {
             // Re-arm Drop so the staging file still gets cleaned up
             // when the session is dropped by the caller.
             self.tmp_path = tmp;
             return AgentResponse::error(
-                format!("failed to rename onto {}: {}", self.target.display(), e),
+                format!("failed to rename onto {}: {}", target.display(), e),
                 error_codes::FILE_IO_FAILED,
             );
         }
         if let Some(m) = self.mode {
-            apply_mode_best_effort(&self.target, m);
+            apply_mode_best_effort(&target, m);
         }
         if self.uid.is_some() || self.gid.is_some() {
-            if let Err(e) = std::os::unix::fs::chown(&self.target, self.uid, self.gid) {
+            if let Err(e) = std::os::unix::fs::chown(&target, self.uid, self.gid) {
                 return AgentResponse::error(
-                    format!("failed to chown {}: {}", self.target.display(), e),
+                    format!("failed to chown {}: {}", target.display(), e),
                     error_codes::FILE_IO_FAILED,
                 );
             }
         }
         info!(
-            path = %self.target.display(),
+            path = %target.display(),
             size = self.bytes_written,
             "file written (streaming)"
         );
@@ -3492,16 +3514,30 @@ fn handle_file_write_begin(
         Ok(root) => root,
         Err(resp) => return (None, resp),
     };
-    let resolved = match resolve_guest_io_path(&path, FilePathAccess::Write, &root) {
-        Ok(p) => p,
-        Err(resp) => return (None, resp),
+    let resolved = match root.namespace() {
+        // When a workload container is running, the final write runs inside
+        // the container's mount namespace via `ns.write_reader`, so stage on
+        // the scratch disk rather than resolving symlinks or creating parent
+        // directories in the agent's namespace.
+        nsfile::GuestNs::Container(_) => {
+            if let Err(resp) = normalize_guest_path(&path) {
+                return (None, resp);
+            }
+            None
+        }
+        nsfile::GuestNs::Root(_) => {
+            match resolve_guest_io_path(&path, FilePathAccess::Write, &root) {
+                Ok(p) => Some(p),
+                Err(resp) => return (None, resp),
+            }
+        }
     };
     let (uid, gid) = if uid.is_none() && gid.is_none() {
         workload_owner(&root)
     } else {
         (uid, gid)
     };
-    match WriteSession::open(resolved, mode, uid, gid, total_size, root) {
+    match WriteSession::open(path, resolved, mode, uid, gid, total_size, root) {
         Ok(session) => (Some(session), AgentResponse::Ok { data: None }),
         Err(e) => (
             None,
@@ -9963,6 +9999,44 @@ mod tests {
         );
         assert_eq!(std::fs::read(&target).unwrap(), payload);
         assert!(staging_files_in(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn streaming_write_for_running_container_stages_on_scratch_and_keeps_guest_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let merged = tmp.path().join("merged");
+        std::fs::create_dir_all(&merged).unwrap();
+        let root = io_target::IoRoot::Overlay {
+            workload_id: "persistent-web".into(),
+            merged: merged.clone(),
+        };
+
+        // When a workload container is running, WriteSession::open is called
+        // with `target: None` so incoming chunks stage on scratch rather than
+        // creating directories or resolving symlinks in the agent's namespace.
+        let session = WriteSession::open(
+            "/mnt/ram/large.bin".into(),
+            None,
+            Some(0o644),
+            None,
+            None,
+            16,
+            root,
+        )
+        .unwrap();
+        assert_eq!(session.guest_path, "/mnt/ram/large.bin");
+        assert!(session.target.is_none());
+        assert!(
+            !merged.join("mnt").exists(),
+            "container-targeted staging must not create parent dirs in the VM overlay"
+        );
+        let tmp_path = session.tmp_path.clone();
+        assert!(tmp_path.exists());
+        drop(session);
+        assert!(
+            !tmp_path.exists(),
+            "Drop must clean up scratch staging file"
+        );
     }
 
     #[test]
