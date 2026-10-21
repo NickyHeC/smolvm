@@ -82,6 +82,7 @@ fn record_to_info(name: &str, record: &VmRecord) -> MachineInfo {
         name: name.to_string(),
         image: record.display_image().map(str::to_string),
         state: actual_state.to_string(),
+        state_reason: record.pause_reason.clone(),
         cpus: record.cpus,
         mem: record.mem,
         pid,

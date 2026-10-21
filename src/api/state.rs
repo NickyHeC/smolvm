@@ -2075,6 +2075,7 @@ pub fn machine_entry_to_info(name: String, entry: &MachineEntry) -> MachineInfo 
         name,
         image: entry.image.clone(),
         state: state.to_string(),
+        state_reason: None,
         cpus: entry.resources.cpus.unwrap_or(1),
         mem: entry.resources.memory_mb.unwrap_or(512),
         pid: entry.manager.child_pid(),

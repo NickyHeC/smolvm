@@ -3521,6 +3521,7 @@ pub fn machine_status_json(name: &str, record: &VmRecord) -> serde_json::Value {
     let mut obj = serde_json::json!({
         "name": name,
         "state": actual_state.to_string(),
+        "state_reason": record.pause_reason,
         "cpus": record.cpus,
         "memory_mib": record.mem,
         "pid": record.pid,

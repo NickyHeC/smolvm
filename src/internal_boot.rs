@@ -218,29 +218,46 @@ pub fn run(config_path: PathBuf) -> crate::Result<()> {
     // Defense-in-depth before this process becomes the VMM host for an untrusted
     // guest: block setuid privilege escalation and core dumps (which would leak
     // guest RAM). See docs/runtime-isolation-hardening.md for the full roadmap.
-    crate::process::harden_self();
-
-    // A guardian-backed clone needs userfaultfd to resolve faults originating
-    // inside KVM. Open it while this dedicated boot process still has the host
-    // service's privileges; libkrun takes ownership after the uid drop.
+    // When the HOST runs out of memory the kernel should take a branch child
+    // before a plain machine, and a branch source last (its death takes every
+    // child with it). Set before hardening: once this process is non-dumpable its own
+    // /proc/self files are root-owned and even raising the score is refused;
+    // lowering it also needs the privileges still held here.
     #[cfg(target_os = "linux")]
-    preopen_guardian_userfaultfd()?;
+    {
+        let clone = std::env::var_os("SMOLVM_SNAPSHOT_DIR").is_some();
+        let source = !clone && std::env::var_os("SMOLVM_FORKABLE").is_some();
+        let adj = crate::process::oom_score_adj_for(source, clone);
+        if adj != 0 {
+            if let Err(e) = crate::process::set_own_oom_score_adj(adj) {
+                eprintln!("[oom] could not set oom_score_adj={adj}: {e}");
+            }
+        }
 
-    // If the supervisor delegated a cgroup v2 root (via SMOLVM_CGROUP_ROOT),
-    // place this VMM in a per-VM cgroup with cpu/pids/memory caps so an untrusted
-    // guest can't peg host CPU, fork-bomb the host, or balloon VMM memory. Inert
-    // when the env var is unset (no delegation) — never blocks boot.
-    #[cfg(target_os = "linux")]
-    if let Some(cgroup_root) = std::env::var_os("SMOLVM_CGROUP_ROOT") {
-        crate::process::place_in_cgroup(
-            std::path::Path::new(&cgroup_root),
-            config.resources.cpus,
-            config.resources.memory_mib,
-            config.cuda,
-            // Match scope-mode accounting for both sources and restored clones.
-            std::env::var_os("SMOLVM_FORKABLE").is_some()
-                || std::env::var_os("SMOLVM_SNAPSHOT_DIR").is_some(),
-        );
+        crate::process::harden_self();
+
+        // A guardian-backed clone needs userfaultfd to resolve faults originating
+        // inside KVM. Open it while this dedicated boot process still has the host
+        // service's privileges; libkrun takes ownership after the uid drop.
+        #[cfg(target_os = "linux")]
+        preopen_guardian_userfaultfd()?;
+
+        // If the supervisor delegated a cgroup v2 root (via SMOLVM_CGROUP_ROOT),
+        // place this VMM in a per-VM cgroup with cpu/pids/memory caps so an untrusted
+        // guest can't peg host CPU, fork-bomb the host, or balloon VMM memory. Inert
+        // when the env var is unset (no delegation) — never blocks boot.
+        #[cfg(target_os = "linux")]
+        if let Some(cgroup_root) = std::env::var_os("SMOLVM_CGROUP_ROOT") {
+            crate::process::place_in_cgroup(
+                std::path::Path::new(&cgroup_root),
+                config.resources.cpus,
+                config.resources.memory_mib,
+                config.cuda,
+                // Match scope-mode accounting for both sources and restored clones.
+                std::env::var_os("SMOLVM_FORKABLE").is_some()
+                    || std::env::var_os("SMOLVM_SNAPSHOT_DIR").is_some(),
+            );
+        }
     }
 
     // Present private backing stores through idmapped mounts in this VMM's own

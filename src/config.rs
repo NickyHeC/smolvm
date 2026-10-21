@@ -424,6 +424,11 @@ pub struct VmRecord {
     #[serde(default)]
     pub state: RecordState,
 
+    /// Why the machine is paused when the host paused it rather than the user
+    /// (the memory pressure guard). Cleared by a resume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_reason: Option<String>,
+
     /// Durable execution state retained until a successful explicit resume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused_checkpoint: Option<std::path::PathBuf>,
@@ -901,6 +906,7 @@ impl VmRecord {
             name,
             created_at: crate::util::current_timestamp(),
             state: RecordState::Created,
+            pause_reason: None,
             paused_checkpoint: None,
             pid: None,
             pid_start_time: None,
@@ -1000,6 +1006,7 @@ impl VmRecord {
             name,
             created_at: crate::util::current_timestamp(),
             state: RecordState::Created,
+            pause_reason: None,
             paused_checkpoint: None,
             pid: None,
             pid_start_time: None,
