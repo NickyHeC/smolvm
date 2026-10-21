@@ -2390,8 +2390,17 @@ fn handle_connection(stream: &mut impl ReadWrite) -> Result<(), Box<dyn std::err
             continue;
         }
         if let AgentRequest::FileWriteChunk { data, done } = request {
-            let (new_session, response) =
-                handle_file_write_chunk(write_session.take(), &data, done);
+            // The last chunk syncs the staged file and, for a running
+            // container, copies it into the container: for a large file that
+            // outlasts the host's frame timeout, so keep the host hearing.
+            let session = write_session.take();
+            let (new_session, response) = if done {
+                with_keepalive(stream, FILE_FINALIZE_KEEPALIVE, || {
+                    handle_file_write_chunk(session, &data, done)
+                })
+            } else {
+                handle_file_write_chunk(session, &data, done)
+            };
             write_session = new_session;
             send_response(stream, &response)?;
             continue;
@@ -3495,6 +3504,42 @@ fn handle_file_write_begin(
 /// is finalized.
 ///
 /// Returns the (possibly consumed) session plus the response.
+/// How often a finalizing file write tells the host it is still working;
+/// well inside the host's frame timeout.
+const FILE_FINALIZE_KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Run `work` on its own thread while this one, the stream's only writer,
+/// sends a progress frame every `period` until it returns, so a slow step
+/// never leaves the host with a silent connection.
+fn with_keepalive<S: Write, T: Send>(
+    stream: &mut S,
+    period: std::time::Duration,
+    work: impl FnOnce() -> T + Send,
+) -> T {
+    std::thread::scope(|scope| {
+        let (finished, wait) = std::sync::mpsc::channel::<()>();
+        let worker = scope.spawn(move || {
+            let result = work();
+            let _ = finished.send(());
+            result
+        });
+        while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = wait.recv_timeout(period) {
+            // Ignore errors from progress updates - non-critical
+            let _ = send_response(
+                stream,
+                &AgentResponse::Progress {
+                    message: "finalizing file write".to_string(),
+                    percent: None,
+                    layer: None,
+                },
+            );
+        }
+        worker
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
 fn handle_file_write_chunk(
     session: Option<WriteSession>,
     data: &[u8],
@@ -10168,5 +10213,48 @@ mod workload_owner_tests {
             merged,
         };
         assert_eq!(workload_owner(&root), (None, None));
+    }
+}
+
+#[cfg(test)]
+mod keepalive_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn progress_frames(bytes: &[u8]) -> usize {
+        let mut rest = bytes;
+        let mut count = 0;
+        while rest.len() >= 4 {
+            let len = u32::from_be_bytes(rest[..4].try_into().unwrap()) as usize;
+            let frame: AgentResponse = serde_json::from_slice(&rest[4..4 + len]).unwrap();
+            assert!(matches!(frame, AgentResponse::Progress { .. }));
+            count += 1;
+            rest = &rest[4 + len..];
+        }
+        count
+    }
+
+    #[test]
+    fn slow_work_keeps_the_host_hearing_and_fast_work_sends_nothing() {
+        let period = Duration::from_millis(40);
+        let mut stream = Vec::new();
+        let result = with_keepalive(&mut stream, period, || {
+            std::thread::sleep(period * 5);
+            "done"
+        });
+        assert_eq!(result, "done");
+        // Timers run late on a loaded host, so only a lower bound holds.
+        assert!(
+            progress_frames(&stream) >= 2,
+            "{} frames",
+            progress_frames(&stream)
+        );
+
+        let mut stream = Vec::new();
+        assert_eq!(
+            with_keepalive(&mut stream, Duration::from_secs(60), || 7),
+            7
+        );
+        assert!(stream.is_empty());
     }
 }
