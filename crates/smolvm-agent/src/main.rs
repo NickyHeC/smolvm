@@ -4628,6 +4628,101 @@ fn workload_needs_pid1(command: &[String]) -> bool {
     )
 }
 
+/// The OCI process `crun exec --process` runs for an exec whose user carries
+/// supplementary groups. crun's `--user` flag sets uid:gid only, so a `runner`
+/// in `docker` lost that group on every exec (and `usermod -aG docker` did
+/// nothing). None when the user has no supplementary groups: the flag path is
+/// exact then. `env` is the exec's complete environment, PATH included.
+#[cfg(target_os = "linux")]
+fn exec_process_spec(
+    rootfs: &std::path::Path,
+    launch: &ResolvedLaunch,
+    env: &[(String, String)],
+    terminal: bool,
+) -> Result<Option<oci::OciProcess>, String> {
+    let identity = oci::resolve_process_identity(rootfs, launch.user.as_deref())?;
+    if identity.user.additional_gids.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(oci::OciProcess {
+        terminal,
+        console_size: None,
+        user: identity.user,
+        args: launch.command.clone(),
+        env: env.iter().map(|(k, v)| format!("{k}={v}")).collect(),
+        cwd: launch
+            .workdir
+            .clone()
+            .filter(|w| !w.is_empty())
+            .unwrap_or_else(|| "/".to_string()),
+        capabilities: None,
+        rlimits: None,
+        no_new_privileges: false,
+    }))
+}
+
+/// Write an exec's process spec where crun reads it. Callers remove the file
+/// once crun has consumed it; files older than ten minutes are swept on every
+/// write for the paths that cannot know when that was.
+#[cfg(target_os = "linux")]
+fn write_exec_process_file(
+    container_id: &str,
+    spec: &oci::OciProcess,
+) -> Result<std::path::PathBuf, String> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = std::env::temp_dir().join("smolvm-exec-process");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        for entry in entries.flatten() {
+            if entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|m| m < old)
+                .unwrap_or(false)
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = dir.join(format!("{container_id}-{}-{n}.json", std::process::id()));
+    let json = serde_json::to_vec(spec).map_err(|e| format!("encode exec process: {e}"))?;
+    std::fs::write(&path, json).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// A running container's root as the agent sees it (`/proc/<init pid>/root`),
+/// where its passwd and group files live.
+#[cfg(target_os = "linux")]
+fn running_container_root(container_id: &str) -> Option<std::path::PathBuf> {
+    crun_container_pid(container_id)
+        .map(|pid| std::path::PathBuf::from(format!("/proc/{pid}/root")))
+}
+
+/// The process file an exec into the running container `container_id` needs
+/// for its user's supplementary groups, written and ready for `--process`; None
+/// when the flag path is exact (see [`exec_process_spec`]).
+#[cfg(target_os = "linux")]
+fn exec_process_file_for(
+    container_id: &str,
+    launch: &ResolvedLaunch,
+    terminal: bool,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let Some(root) = running_container_root(container_id) else {
+        return Ok(None);
+    };
+    match exec_process_spec(
+        &root,
+        launch,
+        &crun::augmented_exec_env(&launch.env, container_id),
+        terminal,
+    )? {
+        Some(spec) => Ok(Some(write_exec_process_file(container_id, &spec)?)),
+        None => Ok(None),
+    }
+}
+
 /// Launch the workload into the started container `container_id`, whose PID 1
 /// is the keep-alive init, and return its identity for the `stop_on_exit`
 /// watcher. Fails, with crun's reason, when the command cannot be started
@@ -4646,22 +4741,43 @@ fn launch_workload(
     let log = crun::workload_log_path(container_id);
     let pid_file = log.with_extension("pid");
     let _ = std::fs::remove_file(&pid_file);
-    let crun = crun::CrunCommand::exec_detached_with_log(
-        container_id,
-        &env,
-        &launch.command,
-        launch.workdir.as_deref(),
-        Some(&pid_file),
-        Some(&log),
-    )
-    .user(user.as_deref())
-    .stdin_null();
+    let process_file = match exec_process_spec(
+        rootfs,
+        launch,
+        &crun::augmented_exec_env(&env, container_id),
+        false,
+    )? {
+        Some(spec) => Some(write_exec_process_file(container_id, &spec)?),
+        None => None,
+    };
+    let crun = match &process_file {
+        Some(pf) => crun::CrunCommand::exec_detached_with_process(
+            container_id,
+            pf,
+            Some(&pid_file),
+            Some(&log),
+        )
+        .stdin_null(),
+        None => crun::CrunCommand::exec_detached_with_log(
+            container_id,
+            &env,
+            &launch.command,
+            launch.workdir.as_deref(),
+            Some(&pid_file),
+            Some(&log),
+        )
+        .user(user.as_deref())
+        .stdin_null(),
+    };
     let status = match workload::output_pipe() {
         Some(output) => crun.output_to(output),
         None => crun.discard_output(),
     }
     .status()
     .map_err(|e| format!("run crun: {e}"))?;
+    if let Some(pf) = &process_file {
+        let _ = std::fs::remove_file(pf);
+    }
     let reason = crun::take_log(&log);
     let pid = std::fs::read_to_string(&pid_file)
         .ok()
@@ -5030,20 +5146,38 @@ fn spawn_exec_in_container(
         }
     }
 
+    // A user with supplementary groups needs a process file (crun's --user flag
+    // is uid:gid only); everyone else takes the flag path unchanged.
+    let spec_for =
+        |terminal: bool| -> Result<Option<std::path::PathBuf>, Box<dyn std::error::Error>> {
+            Ok(exec_process_file_for(container_id, launch, terminal)?)
+        };
+
     if tty {
         // Preferred: console socket (resizable). Mirrors the create path.
         if CONSOLE_SOCKET_WORKS.load(Ordering::Relaxed) {
             let console = pty::ConsoleSocket::bind(container_id)?;
-            let mut child = crun::CrunCommand::exec_with_console(
-                container_id,
-                env,
-                command,
-                workdir,
-                console.path(),
-            )
-            .user(launch.user.as_deref())
-            .spawn()?;
-            match console.recv_master(std::time::Duration::from_secs(3)) {
+            let process_file = spec_for(true)?;
+            let mut child = match &process_file {
+                Some(pf) => {
+                    crun::CrunCommand::exec_with_process_console(container_id, pf, console.path())
+                        .spawn()?
+                }
+                None => crun::CrunCommand::exec_with_console(
+                    container_id,
+                    env,
+                    command,
+                    workdir,
+                    console.path(),
+                )
+                .user(launch.user.as_deref())
+                .spawn()?,
+            };
+            let received = console.recv_master(std::time::Duration::from_secs(3));
+            if let Some(pf) = &process_file {
+                let _ = std::fs::remove_file(pf);
+            }
+            match received {
                 Ok(pty_master) => {
                     let _ = pty_master.set_window_size(80, 24);
                     if let Some(mut err) = child.stderr.take() {
@@ -5094,11 +5228,17 @@ fn spawn_exec_in_container(
         drop(slave_fd);
         Ok((child, Some(pty_master)))
     } else {
-        let child = crun::CrunCommand::exec(container_id, env, command, workdir, false)
-            .user(launch.user.as_deref())
-            .stdin_piped()
-            .capture_output()
-            .spawn()?;
+        let child = match spec_for(false)? {
+            Some(pf) => crun::CrunCommand::exec_with_process(container_id, &pf)
+                .stdin_piped()
+                .capture_output()
+                .spawn()?,
+            None => crun::CrunCommand::exec(container_id, env, command, workdir, false)
+                .user(launch.user.as_deref())
+                .stdin_piped()
+                .capture_output()
+                .spawn()?,
+        };
         Ok((child, None))
     }
 }
@@ -5184,12 +5324,30 @@ fn restored_container_exec_command(
     }
     let environment = crun::augmented_exec_env(&environment, container_id);
 
-    let user = launch.user.as_deref().unwrap_or("0:0");
-    let (uid, gid) = user
-        .split_once(':')
-        .ok_or_else(|| format!("resolved container user is not uid:gid: {user}"))?;
-    let uid: u32 = uid.parse()?;
-    let gid: u32 = gid.parse()?;
+    // The uid:gid plus the user's supplementary groups from the container's own
+    // passwd/group (a `runner` in `docker` keeps `docker`; this path used to call
+    // setgroups(0) and drop every extra group). A rootfs whose passwd cannot be
+    // read falls back to the resolved uid:gid alone.
+    let (uid, gid, groups): (u32, u32, Vec<libc::gid_t>) =
+        match oci::resolve_process_identity(&root, launch.user.as_deref()) {
+            Ok(identity) => (
+                identity.user.uid,
+                identity.user.gid,
+                identity
+                    .user
+                    .additional_gids
+                    .iter()
+                    .map(|g| *g as libc::gid_t)
+                    .collect(),
+            ),
+            Err(_) => {
+                let user = launch.user.as_deref().unwrap_or("0:0");
+                let (uid, gid) = user
+                    .split_once(':')
+                    .ok_or_else(|| format!("resolved container user is not uid:gid: {user}"))?;
+                (uid.parse()?, gid.parse()?, Vec::new())
+            }
+        };
 
     let mut command = Command::new("/usr/bin/nsenter");
     command
@@ -5206,10 +5364,11 @@ fn restored_container_exec_command(
         .envs(environment);
 
     use std::os::unix::process::CommandExt as _;
-    // SAFETY: setgroups is async-signal-safe and touches only child credentials.
+    // SAFETY: setgroups is async-signal-safe and touches only child credentials;
+    // `groups` is moved into the closure and outlives the call.
     unsafe {
-        command.pre_exec(|| {
-            if libc::setgroups(0, std::ptr::null()) != 0 {
+        command.pre_exec(move || {
+            if libc::setgroups(groups.len(), groups.as_ptr()) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(())
@@ -6858,17 +7017,24 @@ fn run_crun_background_exec(
     launch: &ResolvedLaunch,
     pid_file: &std::path::Path,
 ) -> Result<u32, Box<dyn std::error::Error>> {
-    let status = crun::CrunCommand::exec_detached(
-        container_id,
-        &launch.env,
-        &launch.command,
-        launch.workdir.as_deref(),
-        Some(pid_file),
-    )
-    .user(launch.user.as_deref())
-    .stdin_null()
-    .discard_output()
-    .status()?;
+    let process_file = exec_process_file_for(container_id, launch, false)?;
+    let command = match &process_file {
+        Some(pf) => {
+            crun::CrunCommand::exec_detached_with_process(container_id, pf, Some(pid_file), None)
+        }
+        None => crun::CrunCommand::exec_detached(
+            container_id,
+            &launch.env,
+            &launch.command,
+            launch.workdir.as_deref(),
+            Some(pid_file),
+        )
+        .user(launch.user.as_deref()),
+    };
+    let status = command.stdin_null().discard_output().status()?;
+    if let Some(pf) = &process_file {
+        let _ = std::fs::remove_file(pf);
+    }
     if !status.success() {
         return Err(format!(
             "crun exec --detach failed (exit {})",
@@ -7103,14 +7269,19 @@ fn spawn_crun_foreground_exec(
     exec_pid_file: &crun::ExecPidFile,
     stdin_data: Option<&str>,
 ) -> Result<Child, Box<dyn std::error::Error>> {
-    let mut builder = crun::CrunCommand::exec(
-        container_id,
-        &launch.env,
-        &launch.command,
-        launch.workdir.as_deref(),
-        false,
-    )
-    .user(launch.user.as_deref())
+    // A user with supplementary groups runs from a process file (crun's --user is
+    // uid:gid only); crun reads it at start and the next write sweeps it.
+    let mut builder = match exec_process_file_for(container_id, launch, false)? {
+        Some(pf) => crun::CrunCommand::exec_with_process(container_id, &pf),
+        None => crun::CrunCommand::exec(
+            container_id,
+            &launch.env,
+            &launch.command,
+            launch.workdir.as_deref(),
+            false,
+        )
+        .user(launch.user.as_deref()),
+    }
     .pid_file(exec_pid_file.path())
     .capture_output();
     builder = if stdin_data.is_some() {
@@ -10256,5 +10427,78 @@ mod keepalive_tests {
             7
         );
         assert!(stream.is_empty());
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod exec_process_spec_tests {
+    use super::{exec_process_spec, ResolvedLaunch};
+
+    fn rootfs() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("etc")).unwrap();
+        std::fs::write(
+            dir.path().join("etc/passwd"),
+            "root:x:0:0:root:/root:/bin/bash\nrunner:x:1001:1001::/home/runner:/bin/bash\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("etc/group"),
+            "root:x:0:\nrunner:x:1001:\ndocker:x:999:runner\nsudo:x:27:runner\n",
+        )
+        .unwrap();
+        dir
+    }
+
+    fn launch(user: Option<&str>) -> ResolvedLaunch {
+        ResolvedLaunch {
+            command: vec!["id".into(), "-G".into()],
+            env: vec![("PATH".into(), "/usr/bin".into())],
+            workdir: Some("/home/runner".into()),
+            user: user.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_user_with_supplementary_groups_gets_a_process_spec_that_names_them() {
+        let root = rootfs();
+        let env = vec![("PATH".to_string(), "/usr/bin".to_string())];
+        // the exec path hands over an already-resolved numeric uid:gid; the
+        // passwd lookup by uid recovers the name and so the groups
+        let spec = exec_process_spec(root.path(), &launch(Some("1001:1001")), &env, false)
+            .unwrap()
+            .expect("runner is in docker and sudo");
+        assert_eq!((spec.user.uid, spec.user.gid), (1001, 1001));
+        assert_eq!(spec.user.additional_gids, vec![999, 27]);
+        assert_eq!(spec.cwd, "/home/runner");
+        assert!(!spec.terminal);
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(json.contains("\"additionalGids\":[999,27]"), "{json}");
+        assert!(json.contains("\"env\":[\"PATH=/usr/bin\"]"), "{json}");
+        let by_name = exec_process_spec(root.path(), &launch(Some("runner")), &env, true)
+            .unwrap()
+            .unwrap();
+        assert!(by_name.terminal);
+        assert_eq!(by_name.user.additional_gids, vec![999, 27]);
+    }
+
+    #[test]
+    fn root_and_users_without_extra_groups_keep_the_flag_path() {
+        let root = rootfs();
+        let env = vec![];
+        assert!(exec_process_spec(root.path(), &launch(None), &env, false)
+            .unwrap()
+            .is_none());
+        assert!(
+            exec_process_spec(root.path(), &launch(Some("0:0")), &env, false)
+                .unwrap()
+                .is_none()
+        );
+        // an unknown numeric uid has no name and so no groups
+        assert!(
+            exec_process_spec(root.path(), &launch(Some("4242:4242")), &env, false)
+                .unwrap()
+                .is_none()
+        );
     }
 }

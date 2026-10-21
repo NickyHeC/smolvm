@@ -1203,7 +1203,16 @@ fn describe_start_error_with_probe(ret: i32, kvm_error: Option<&str>) -> String 
         5 => "EIO — a backing disk or overlay could not be read/created",
         13 => "EACCES — permission denied opening a VM resource (disk, socket, or rootfs)",
         16 => "EBUSY — a VM resource is already in use by another process",
-        12 => "ENOMEM — out of memory starting the VM",
+        12 => {
+            "ENOMEM — the host could not allocate the machine's RAM or its KVM state: the node \
+               has no room for another VM of this size"
+        }
+        11 => {
+            "EAGAIN — the host ran out of a resource (memory, threads) while starting the VM: \
+               the node is full"
+        }
+        23 | 24 => "EMFILE/ENFILE — the VM process or the host hit its open-file limit",
+        28 => "ENOSPC — no space left for the VM's disk or memory backing",
         1 => "EPERM — the hypervisor rejected the operation (KVM/HVF/WHP access)",
         19 => "ENODEV — the hypervisor device is unavailable (is KVM/HVF/WHP enabled?)",
         _ => "the VM failed to start at the hypervisor layer",

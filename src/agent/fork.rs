@@ -485,8 +485,9 @@ pub fn wait_for_forkpoint(golden: &str, timeout: Duration) -> Result<()> {
                 "source '{golden}' did not reach a branchpoint within {}s: {f}\n\
                  A batch branch checkpoints the source at a point its workload declares by running \
                  `smolvm-branch-ready` after setup (see README, \"Branch a running machine\"). \
-                 If the workload never calls it, either add the call, raise --ready-timeout, or \
-                 take single `--name` branches, which checkpoint the source wherever it is.",
+                 If the workload never calls it, either add the call, raise --ready-timeout, pass \
+                 --no-wait-ready to checkpoint the source where it is (what the API does by default), \
+                 or take single `--name` branches, which do the same.",
                 timeout.as_secs_f64()
             ),
         )),
