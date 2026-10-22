@@ -425,6 +425,25 @@ EOF
     [[ "$sf_out" == *"from-smolfile"* ]] && [[ "$cli_out" == *"from-cli"* ]]
 }
 
+# `machine run` bakes init into a cached layer through a temp machine created
+# from the same Smolfile. Each step must run there exactly once, in order, or a
+# step that is not idempotent (useradd, mkdir) fails the first run.
+test_init_layer_bake_runs_each_smolfile_init_step_once() {
+    cat > "$SMOLFILE_TMPDIR/Smolfile.bake_once" <<'EOF'
+image = "alpine:latest"
+net = true
+init = ["echo from-smolfile >> /init-steps.txt"]
+EOF
+
+    local output
+    output=$($SMOLVM machine run --rebuild-init-cache \
+        --smolfile "$SMOLFILE_TMPDIR/Smolfile.bake_once" \
+        --init "echo from-cli >> /init-steps.txt" \
+        -- cat /init-steps.txt 2>&1) || return 1
+
+    [[ "$(echo "$output" | grep '^from-' | tr '\n' ' ')" == "from-smolfile from-cli " ]]
+}
+
 test_smolfile_not_found_errors() {
     local vm_name="smolfile-notfound-$$"
     cleanup_vm "$vm_name"
@@ -1024,6 +1043,7 @@ run_test "Smolfile basic (cpus + init)" test_smolfile_basic || true
 run_test "Smolfile with env" test_smolfile_with_env || true
 run_test "Smolfile CLI overrides scalars" test_smolfile_cli_overrides_scalars || true
 run_test "Smolfile CLI extends init" test_smolfile_cli_extends_init || true
+run_test "Init layer bake runs each Smolfile init step once" test_init_layer_bake_runs_each_smolfile_init_step_once || true
 run_test "Smolfile not found errors" test_smolfile_not_found_errors || true
 run_test "Smolfile invalid TOML errors" test_smolfile_invalid_toml_errors || true
 run_test "Smolfile unknown field errors" test_smolfile_unknown_field_errors || true

@@ -1130,6 +1130,7 @@ fn bake_start_args<'a>(
 fn ensure_init_layer(
     params: &vm_common::CreateVmParams,
     smolfile: Option<&Path>,
+    cli_init: &[String],
     rebuild: bool,
     digest: Option<&str>,
     proxy: Option<&str>,
@@ -1215,10 +1216,10 @@ fn ensure_init_layer(
             create.push("-e".into());
             create.push(e.clone());
         }
-        // Forward the RESOLVED init steps too: they may have come from `--init`
-        // rather than the Smolfile, and the cache key is derived from them, so
-        // the baked rootfs must run exactly these.
-        for step in &params.init {
+        // `--smolfile` already supplies the Smolfile's init and `create` appends
+        // `--init` to it, so forward only the run's own steps: together they are
+        // the resolved init the cache key is derived from, each step once.
+        for step in cli_init {
             create.push("--init".into());
             create.push(step.clone());
         }
@@ -1724,6 +1725,7 @@ impl RunCmd {
             let cached = ensure_init_layer(
                 &params,
                 self.smolfile.as_deref(),
+                &self.init,
                 self.rebuild_init_cache,
                 resolved_digest.as_deref(),
                 self.proxy_opts.resolved_proxy()?.as_deref(),
