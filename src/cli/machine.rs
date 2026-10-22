@@ -1327,22 +1327,24 @@ fn ensure_init_layer(
 /// Run this same smolvm binary as a subprocess for one bake step. Output is
 /// CAPTURED (not inherited) so the bake's internal create/pull/pack chatter — and
 /// the harmless "vm not found" from the best-effort pre-clean — never reach the
-/// user's terminal; on failure the captured stderr tail is surfaced in the error.
+/// user's terminal; on failure the captured stdout and stderr tails are surfaced
+/// in the error.
 fn run_smolvm(exe: &Path, args: &[&str]) -> smolvm::Result<()> {
     let out = std::process::Command::new(exe)
         .args(args)
         .output()
         .map_err(|e| smolvm::Error::config("init-layer bake", e.to_string()))?;
     if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let tail = stderr
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .rev()
-            .take(12)
-            .collect::<Vec<_>>()
+        // An image's init step runs under a tty, so what it printed is on stdout,
+        // ahead of the error on stderr: keep the last 12 lines of each.
+        let tail = |bytes: &[u8]| {
+            let text = String::from_utf8_lossy(bytes);
+            let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+            lines[lines.len().saturating_sub(12)..].join("\n")
+        };
+        let tail = [tail(&out.stdout), tail(&out.stderr)]
             .into_iter()
-            .rev()
+            .filter(|t| !t.is_empty())
             .collect::<Vec<_>>()
             .join("\n");
         return Err(smolvm::Error::config(

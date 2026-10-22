@@ -316,6 +316,16 @@ EOF
     [[ $start_exit -ne 0 ]] && [[ "$output" == *"Unable to locate"* ]]
 }
 
+# The same contract on `machine run`'s cached path: init runs in a bake whose
+# output is captured, so a failing step's own message must reach the error.
+test_a_failing_init_step_in_a_cached_run_shows_its_output() {
+    local output
+    output=$($SMOLVM machine run --rebuild-init-cache --image alpine:latest --net \
+        --init "echo out-marker; echo err-marker >&2; exit 3" -- true 2>&1) && return 1
+
+    [[ "$output" == *"out-marker"* ]] && [[ "$output" == *"err-marker"* ]]
+}
+
 # =============================================================================
 # --smolfile flag
 # =============================================================================
@@ -1020,6 +1030,7 @@ run_test "Init in container: runs inside image rootfs" test_init_in_container_us
 run_test "Init in container: pull precedes init" test_init_runs_after_image_pull || true
 run_test "Init in container: filesystem changes visible to exec" test_init_in_container_persists_filesystem_changes || true
 run_test "Init in container: failure surfaces full error output" test_init_failure_surfaces_full_error || true
+run_test "Init in a cached run: failure shows the step's output" test_a_failing_init_step_in_a_cached_run_shows_its_output || true
 run_test "Smolfile basic (cpus + init)" test_smolfile_basic || true
 run_test "Smolfile with env" test_smolfile_with_env || true
 run_test "Smolfile CLI overrides scalars" test_smolfile_cli_overrides_scalars || true
