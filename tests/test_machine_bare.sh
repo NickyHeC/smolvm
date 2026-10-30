@@ -990,4 +990,26 @@ test_machine_survives_rapid_exec() {
 
 run_test "Drop-safety: machine survives 5 rapid execs" test_machine_survives_rapid_exec || true
 
+test_sigterm_to_agent_is_recorded_in_console_log() {
+    # The agent writes a fixed receipt to its console before it syncs and
+    # exits, so the console log says why the machine went down.
+    local name="sigterm-$$" log receipts i
+    "$SMOLVM" machine create --name "$name" --mem 512 >/dev/null 2>&1 || return 1
+    "$SMOLVM" machine start --name "$name" >/dev/null 2>&1 || return 1
+    log="$(vm_data_dir "$name")/agent-console.log"
+    run_with_timeout 15 "$SMOLVM" machine exec --name "$name" -- \
+        sh -c 'kill -TERM "$(ps -o pid,comm | awk "\$2 == \"memfd:agent\" {print \$1}")"' >/dev/null 2>&1
+    for i in $(seq 1 20); do
+        "$SMOLVM" machine ls 2>/dev/null | grep -q "^$name  *stopped" && break
+        sleep 0.5
+    done
+    receipts=$(grep -cx '{"event":"smol_hotfork_agent_signal","signal":15}' "$log" 2>/dev/null)
+    "$SMOLVM" machine stop --name "$name" >/dev/null 2>&1 || true
+    "$SMOLVM" machine delete --name "$name" -f >/dev/null 2>&1 || true
+
+    [[ "$receipts" == "1" ]] || { echo "want one SIGTERM receipt in $log, found '${receipts:-0}'"; return 1; }
+}
+
+run_test "Shutdown: a SIGTERM to the agent is recorded in its console log" test_sigterm_to_agent_is_recorded_in_console_log || true
+
 print_summary "Bare VM Tests"

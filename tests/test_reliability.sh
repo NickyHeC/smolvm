@@ -167,11 +167,37 @@ test_concurrent_exec_does_not_flip_unreachable() {
     fi
 }
 
+test_exec_on_unresponsive_agent_reports_the_live_process() {
+    # A live VM process whose agent does not answer is reported as such; only
+    # a stopped machine is sent to `machine start`.
+    local name="unresponsive-$$" pid live stopped
+    $SMOLVM machine create --name "$name" --cpus 1 --mem 256 >/dev/null 2>&1 || return 1
+    $SMOLVM machine start --name "$name" >/dev/null 2>&1 || return 1
+    pid=$($SMOLVM machine ls --json 2>/dev/null | grep -A20 "\"$name\"" | grep -m1 -oE '"pid":[[:space:]]*[0-9]+' | grep -oE '[0-9]+$')
+    [[ -n "$pid" ]] || { echo "no pid for $name"; return 1; }
+
+    # SIGSTOP freezes the whole VM, so the process stays alive and the agent
+    # cannot answer the connect probe.
+    kill -STOP "$pid"
+    live=$(run_with_timeout 30 "$SMOLVM" machine exec --name "$name" -- true 2>&1)
+    kill -CONT "$pid"
+    $SMOLVM machine stop --name "$name" >/dev/null 2>&1 || true
+    stopped=$($SMOLVM machine exec --name "$name" -- true 2>&1)
+    $SMOLVM machine delete --name "$name" -f >/dev/null 2>&1 || true
+
+    [[ "$live" == *"machine '$name' has a live VM process but its agent is unresponsive"* && "$live" != *"Start it with"* ]] || {
+        echo "live process with an unresponsive agent: $live"; return 1
+    }
+    [[ "$stopped" == *"machine '$name' is not running. Start it with 'smolvm machine start --name $name'"* ]] || {
+        echo "stopped machine: $stopped"; return 1
+    }
+}
 
 run_test "Concurrent machine starts" test_concurrent_machine_start || true
 run_test "State probe tolerates busy agent (no false unreachable)" test_state_probe_tolerates_busy_agent || true
 run_test "Concurrent exec does not flip VM to unreachable" test_concurrent_exec_does_not_flip_unreachable || true
 run_test "Listing: machine ls does not kill VM" test_machine_ls_does_not_kill_vm || true
 run_test "Listing: named VM survives repeated ls" test_named_vm_survives_ls || true
+run_test "Exec on a live VM with an unresponsive agent reports the live process" test_exec_on_unresponsive_agent_reports_the_live_process || true
 
 print_summary "Reliability Tests"

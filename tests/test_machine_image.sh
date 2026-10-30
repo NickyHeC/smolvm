@@ -437,12 +437,48 @@ test_cp_matches_exec_on_image_machine() {
     cleanup_cp_image
 }
 
+test_restart_rewrites_resolver_to_active_dns_policy() {
+    # The persistent overlay keeps the guest's edits across a restart, except
+    # /etc/resolv.conf, which follows the DNS policy of the new start.
+    local name="resolver-$$" fresh="resolver-fresh-$$" first restarted marker filtered want_filtered m
+    cleanup_resolver() {
+        for m in "$name" "$fresh"; do
+            $SMOLVM machine stop --name "$m" >/dev/null 2>&1 || true
+            $SMOLVM machine delete --name "$m" -f >/dev/null 2>&1 || true
+        done
+    }
+    $SMOLVM machine create --name "$name" --image alpine --net --mem 512 >/dev/null 2>&1 || return 1
+    $SMOLVM machine start --name "$name" >/dev/null 2>&1 || { cleanup_resolver; return 1; }
+    first=$($SMOLVM machine exec --name "$name" -- cat /etc/resolv.conf 2>&1)
+    $SMOLVM machine exec --name "$name" -- sh -c 'echo nameserver 203.0.113.9 > /etc/resolv.conf && echo kept > /etc/smol-marker' 2>&1
+    $SMOLVM machine stop --name "$name" >/dev/null 2>&1
+    $SMOLVM machine start --name "$name" >/dev/null 2>&1 || { cleanup_resolver; return 1; }
+    restarted=$($SMOLVM machine exec --name "$name" -- cat /etc/resolv.conf 2>&1)
+    marker=$($SMOLVM machine exec --name "$name" -- cat /etc/smol-marker 2>&1)
+
+    $SMOLVM machine stop --name "$name" >/dev/null 2>&1
+    $SMOLVM machine update --name "$name" --allow-host example.com >/dev/null 2>&1 || { cleanup_resolver; return 1; }
+    $SMOLVM machine start --name "$name" >/dev/null 2>&1 || { cleanup_resolver; return 1; }
+    filtered=$($SMOLVM machine exec --name "$name" -- cat /etc/resolv.conf 2>&1)
+    $SMOLVM machine create --name "$fresh" --image alpine --allow-host example.com --mem 512 >/dev/null 2>&1 || { cleanup_resolver; return 1; }
+    $SMOLVM machine start --name "$fresh" >/dev/null 2>&1 || { cleanup_resolver; return 1; }
+    want_filtered=$($SMOLVM machine exec --name "$fresh" -- cat /etc/resolv.conf 2>&1)
+    cleanup_resolver
+
+    [[ "$restarted" == "$first" ]] || { echo "after a restart resolv.conf is '$restarted', want '$first'"; return 1; }
+    [[ "$marker" == "kept" ]] || { echo "other /etc edits must persist, got '$marker'"; return 1; }
+    [[ "$filtered" == "$want_filtered" && "$filtered" != "$first" ]] || {
+        echo "after update --allow-host resolv.conf is '$filtered', want '$want_filtered' (a fresh machine's)"; return 1
+    }
+}
+
 run_test "Create with --image" test_create_with_image || true
 run_test "Mirrored pull keeps original image reference" test_mirrored_image_is_cached_under_original_reference || true
 run_test "cp: reads and writes the container filesystem exec uses" test_cp_matches_exec_on_image_machine || true
 run_test "Create with --image + env" test_create_with_image_and_env || true
 run_test "Update: settings applied on next start + refuses running VM" test_update_settings_applied_on_start || true
 run_test "Update: env var applied on next start (image-based)" test_update_env_applied_on_start || true
+run_test "Restart: resolv.conf follows the active DNS policy" test_restart_rewrites_resolver_to_active_dns_policy || true
 run_test "Exec: large stdout does not crash VM (image-backed)" test_exec_image_large_stdout_does_not_crash_vm || true
 run_test "Exec: large stdout does not crash VM (joined exec)" test_exec_joined_large_stdout_does_not_crash_vm || true
 run_test "Exec-join: exec joins main workload container" test_exec_joins_main_container || true
