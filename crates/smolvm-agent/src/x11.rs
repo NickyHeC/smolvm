@@ -242,7 +242,8 @@ mod tests {
         let mut env = vec![("PATH".to_string(), "/usr/bin".to_string())];
         inject_into_env_if(&mut env, true);
         assert!(
-            env.iter().any(|(k, v)| k == "DISPLAY" && v == GUEST_DISPLAY),
+            env.iter()
+                .any(|(k, v)| k == "DISPLAY" && v == GUEST_DISPLAY),
             "DISPLAY must be injected into the exec/run env when the bridge is enabled"
         );
 

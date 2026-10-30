@@ -43,8 +43,8 @@ pub fn stage_host_binary(vmdir: &Path, src: &Path) -> std::io::Result<PathBuf> {
 
     // Re-copy only when missing or the source is newer / a different size, so
     // repeated boots do not pay the copy each time.
-    if needs_copy(&src, &dst)? {
-        std::fs::copy(&src, &dst)?;
+    if needs_copy(src, &dst)? {
+        std::fs::copy(src, &dst)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

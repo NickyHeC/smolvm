@@ -114,9 +114,9 @@ mod storage;
 mod timesync;
 mod vsock;
 mod vulkan;
+mod waypipe;
 #[cfg(target_os = "linux")]
 mod workload;
-mod waypipe;
 mod x11;
 
 // ============================================================================
@@ -4273,9 +4273,12 @@ fn handle_interactive_run(
     // exec surfaces the same text on the command stderr.)
     if let Some(warning) = waypipe_warning {
         let line = format!("\r\n{warning}\r\n");
-        let _ = send_response(stream, &AgentResponse::Stdout {
-            data: line.into_bytes(),
-        });
+        let _ = send_response(
+            stream,
+            &AgentResponse::Stdout {
+                data: line.into_bytes(),
+            },
+        );
     }
 
     // Run the appropriate interactive I/O loop
@@ -5867,6 +5870,9 @@ fn ensure_main_container(
 /// Spawn the interactive command, returning the child, its PTY master (when a
 /// TTY was requested), and an optional one-line warning to print to the user's
 /// terminal before the session starts (currently the waypipe daemon-start
+#[cfg(target_os = "linux")]
+type InteractiveSpawn = (Child, Option<pty::PtyMaster>, Option<String>);
+
 /// outcome, `None` unless forwarding is enabled and did not come up).
 #[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)]
@@ -5878,7 +5884,7 @@ fn spawn_interactive_command(
     persistent_overlay_id: Option<&str>,
     unprivileged: bool,
     s3_volumes: &[smolvm_protocol::S3Volume],
-) -> Result<(Child, Option<pty::PtyMaster>, Option<String>), Box<dyn std::error::Error>> {
+) -> Result<InteractiveSpawn, Box<dyn std::error::Error>> {
     use std::path::Path;
 
     if launch.command.is_empty() {

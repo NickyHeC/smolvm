@@ -187,11 +187,7 @@ pub fn start_daemon_in_container(container_id: &str) -> DaemonStartOutcome {
         port = ports::WAYPIPE,
     );
 
-    let command = [
-        "/bin/sh".to_string(),
-        "-c".to_string(),
-        script,
-    ];
+    let command = ["/bin/sh".to_string(), "-c".to_string(), script];
     let env: [(String, String); 0] = [];
 
     // `crun start` returns before the container is necessarily ready for exec
@@ -304,11 +300,7 @@ fn binary_present(container_id: &str, bin: &str) -> bool {
     } else {
         format!("command -v {bin} >/dev/null 2>&1")
     };
-    let command = [
-        "/bin/sh".to_string(),
-        "-c".to_string(),
-        probe,
-    ];
+    let command = ["/bin/sh".to_string(), "-c".to_string(), probe];
     let env: [(String, String); 0] = [];
     crate::crun::CrunCommand::exec(container_id, &env, &command, None, false)
         .stdin_null()
@@ -324,11 +316,7 @@ fn binary_present(container_id: &str, bin: &str) -> bool {
 #[cfg(target_os = "linux")]
 fn daemon_socket_present(container_id: &str) -> bool {
     let sock = format!("{}/{}", GUEST_WAYLAND_DIR, GUEST_WAYLAND_DISPLAY);
-    let command = [
-        "test".to_string(),
-        "-S".to_string(),
-        sock,
-    ];
+    let command = ["test".to_string(), "-S".to_string(), sock];
     let env: [(String, String); 0] = [];
     crate::crun::CrunCommand::exec(container_id, &env, &command, None, false)
         .stdin_null()
@@ -359,9 +347,9 @@ impl DaemonStartOutcome {
                  waypipe in the guest (e.g. `apt-get install -y waypipe`); it starts \
                  automatically on the next command with no restart."
             )),
-            DaemonStartOutcome::Failed(reason) => {
-                Some(format!("smolvm: waypipe forwarding is not available: {reason}"))
-            }
+            DaemonStartOutcome::Failed(reason) => Some(format!(
+                "smolvm: waypipe forwarding is not available: {reason}"
+            )),
         }
     }
 }

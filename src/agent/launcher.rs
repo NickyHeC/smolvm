@@ -2405,10 +2405,8 @@ pub fn launch_agent_vm(config: &LaunchConfig<'_>) -> Result<()> {
                         if krun_add_virtiofs(ctx, tag.as_ptr(), host_path.as_ptr()) < 0 {
                             tracing::warn!("krun_add_virtiofs failed for waypipe binary; falling back to container PATH");
                         } else {
-                            waypipe_guest_bin = Some(format!(
-                                "{}/waypipe",
-                                smolvm_protocol::WAYPIPE_GUEST_PATH
-                            ));
+                            waypipe_guest_bin =
+                                Some(format!("{}/waypipe", smolvm_protocol::WAYPIPE_GUEST_PATH));
                         }
                     }
                     None => {

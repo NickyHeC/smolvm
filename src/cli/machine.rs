@@ -2380,7 +2380,8 @@ impl RunCmd {
                                 o.cuda = self.cuda || o.cuda;
                                 o.docker_socket = self.docker_socket || o.docker_socket;
                                 o.waypipe = self.waypipe.is_some() || o.waypipe;
-                                o.waypipe_bin = self.waypipe.clone().or_else(|| o.waypipe_bin.clone());
+                                o.waypipe_bin =
+                                    self.waypipe.clone().or_else(|| o.waypipe_bin.clone());
                                 o.x11 = self.x11 || o.x11;
                                 o.gpu = self.gpu || o.gpu;
                                 o.gpu_vram_mib = self.gpu_vram_mib.or(o.gpu_vram_mib);
