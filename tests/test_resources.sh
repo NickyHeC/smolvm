@@ -181,6 +181,15 @@ test_exec_nonexistent_machine_reports_not_found() {
         return 1
     }
 
+    # Without --name exec targets "default"; a missing one is not found, with no warning.
+    if ! $SMOLVM machine ls 2>/dev/null | grep -q '^default '; then
+        exit_code=0
+        output=$(env -u SMOLVM_MACHINE_NAME $SMOLVM machine exec -- echo hi 2>&1) || exit_code=$?
+        [[ $exit_code -ne 0 && "$output" == *"machine 'default' not found"* && "$output" != *"WARN"* ]] || {
+            echo "exec with no default machine: $output"; return 1
+        }
+    fi
+
     exit_code=0
     output=$($SMOLVM machine cp /etc/hostname "$name":/tmp/x 2>&1) || exit_code=$?
     [[ $exit_code -ne 0 ]] || { echo "cp to a nonexistent machine should fail"; return 1; }

@@ -93,15 +93,6 @@ pub fn ensure_running_and_connect(
             }
         }
 
-        // Best-effort reconcile: if we can't connect to the agent
-        // but the libkrun PID is alive, we're in the bug 2 zombie
-        // state — record says "running" but agent is dead. Mark
-        // the record `Unreachable` so subsequent `machine list`
-        // calls reflect truth without re-pinging. DB write is
-        // best-effort: we ignore failures so a bad DB doesn't mask
-        // the real "can't connect" error the user is about to see.
-        mark_unreachable_if_zombie(&label);
-
         // Distinguish "machine does not exist" from "machine exists but is
         // stopped". Without this a typo in --name reports "is not running"
         // and points at `start`, which then fails differently (QA BUG-45).
@@ -112,6 +103,15 @@ pub fn ensure_running_and_connect(
                 format!("machine '{}' not found", label),
             ));
         };
+
+        // Best-effort reconcile: if we can't connect to the agent
+        // but the libkrun PID is alive, we're in the bug 2 zombie
+        // state: the record says "running" but the agent is dead. Mark
+        // the record `Unreachable` so subsequent `machine list`
+        // calls reflect truth without re-pinging. DB write is
+        // best-effort: we ignore failures so a bad DB doesn't mask
+        // the real "can't connect" error the user is about to see.
+        mark_unreachable_if_zombie(&label, &record);
 
         // A failed agent probe does not establish that the VM process stopped.
         if record.is_process_alive() {
@@ -174,18 +174,7 @@ fn cli_recover_if_unreachable(name: &str) -> smolvm::Result<()> {
 ///
 /// Reconciliation failures warn with machine identity while preserving the
 /// caller’s connection error; successful updates alone log at debug level.
-fn mark_unreachable_if_zombie(name: &str) {
-    let mut config = match SmolvmConfig::load() {
-        Ok(config) => config,
-        Err(error) => {
-            tracing::warn!(machine = %name, error = %error, "cannot load config for unreachable reconciliation");
-            return;
-        }
-    };
-    let Some(record) = config.get_vm(name) else {
-        tracing::warn!(machine = %name, "missing record during unreachable reconciliation");
-        return;
-    };
+fn mark_unreachable_if_zombie(name: &str, record: &VmRecord) {
     // Only transition Running → Unreachable. Stopped/Created/Failed
     // are already accurate.
     if record.state != RecordState::Running {
@@ -201,6 +190,13 @@ fn mark_unreachable_if_zombie(name: &str) {
     if smolvm::agent::state_probe::is_frozen_fork_base(name, record) {
         return;
     }
+    let mut config = match SmolvmConfig::load() {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::warn!(machine = %name, error = %error, "cannot load config for unreachable reconciliation");
+            return;
+        }
+    };
     // Connection failure with a live process is not proof of agent death.
     match config.update_vm(name, |r| {
         r.state = RecordState::Unreachable;
