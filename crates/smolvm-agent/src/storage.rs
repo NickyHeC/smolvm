@@ -4324,7 +4324,7 @@ impl OverlaySetup {
         if self.merged_path.exists() && is_mountpoint(&self.merged_path) {
             if mounted_overlay_is_healthy(&self.merged_path) {
                 info!(workload_id = %self.workload_id, "reusing existing persistent overlay");
-                // Intent: persistent-overlay DNS follows the active backend (INTENT.md).
+                // Persistent-overlay DNS follows the active backend.
                 refresh_overlay_resolver(&self.merged_path)?;
                 refresh_overlay_hostname(&self.merged_path);
                 self.create_bundle()?;
@@ -4385,7 +4385,6 @@ impl OverlaySetup {
     }
 }
 
-// Intent: INTENT.md, persistent-overlay resolver refresh only.
 // Mounted overlays must be written through merged, never their live upperdir.
 fn refresh_overlay_resolver(root: &Path) -> Result<()> {
     let path = root.join("etc/resolv.conf");

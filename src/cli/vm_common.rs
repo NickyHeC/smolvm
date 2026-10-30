@@ -113,7 +113,6 @@ pub fn ensure_running_and_connect(
             ));
         };
 
-        // Intent: plans/2026-09-19-live-unreachable-diagnostic.md.
         // A failed agent probe does not establish that the VM process stopped.
         if record.is_process_alive() {
             return Err(smolvm::Error::agent(
@@ -203,7 +202,6 @@ fn mark_unreachable_if_zombie(name: &str) {
         return;
     }
     // Connection failure with a live process is not proof of agent death.
-    // Intent: plans/2026-09-19-live-unreachable-diagnostic.md.
     match config.update_vm(name, |r| {
         r.state = RecordState::Unreachable;
     }) {
