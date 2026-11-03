@@ -69,7 +69,7 @@ case "$kernel" in
         if [ "$arch" != "aarch64" ]; then
             emit hardware_verified no
             blocked=1
-            note "no darwin-x86_64 archive is published for v1.29.0, so the installer accepts an Intel Mac and then stops at the download"
+            note "no darwin-x86_64 archive is published for v1.29.0, so the installer refuses an Intel Mac before any download"
         else
             emit hardware_verified yes
         fi

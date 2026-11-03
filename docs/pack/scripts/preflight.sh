@@ -73,7 +73,7 @@ case "$kernel" in
         if [ "$hv" = "1" ]; then emit accel_access ok; else emit accel_access denied; blocked=1; fi
         if [ "$arch" != "aarch64" ]; then
             emit hardware_verified no
-            note "Intel Mac is not verified by this packet; the installer accepts it and nothing here was run on one"
+            note "Intel Mac is not verified by this packet; the installer refuses it and nothing here was run on one"
         else
             emit hardware_verified yes
         fi

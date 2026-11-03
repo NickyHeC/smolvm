@@ -136,8 +136,8 @@ included, so read the plain report first.
 - **Linux aarch64**: verified on v1.18.2, and run once on v1.22.2. **Linux x86_64**: verified on
   v1.14.2, and installed on v1.14.6 for the gpu-cuda run. The `kvm` group check applies to every
   fresh host.
-- **Intel Mac**: the installer accepts macOS 11 or later on Intel and then stops at the download,
-  because no `darwin-x86_64` archive is published for v1.29.0; `preflight.sh` says so.
+- **Intel Mac**: the installer refuses it before any download, because no `darwin-x86_64` archive
+  is published for v1.29.0; `preflight.sh` says so.
 - **Windows x86_64**: `references/windows.md`, **re-run on 2026-10-03 against v1.22.2** on
   Windows 11 Home build 10.0.26200 UBR 9457, where it confirmed. The
   three facts that break a Unix-shaped script are there: the zip unpacks into a nested versioned
