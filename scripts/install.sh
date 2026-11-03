@@ -101,6 +101,12 @@ detect_platform() {
             ;;
     esac
 
+    # No darwin-x86_64 archive is published, so refuse before any download.
+    if [[ "$os" == "darwin" && "$arch" == "x86_64" ]]; then
+        error "No smolvm build for darwin-x86_64 (macOS is Apple Silicon only)."
+        exit 1
+    fi
+
     echo "${os}-${arch}"
 }
 
