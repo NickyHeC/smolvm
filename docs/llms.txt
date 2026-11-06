@@ -13,6 +13,7 @@
 - [install](install/SKILL.md): installing smolvm and proving the host can boot a microVM
 - [local-api](local-api/SKILL.md): driving the machine lifecycle over the local HTTP API
 - [pack](pack/SKILL.md): packing an image or a machine into a portable artifact
+- [rewind](rewind/SKILL.md): a rolling window of captures on a timer, and bringing a machine back from any capture in the past 10 minutes
 - [teardown](teardown/SKILL.md): what state exists, where it lives, and how to leave nothing running
 - [throwaway-machine](throwaway-machine/SKILL.md): running untrusted code in a throwaway machine, with egress granted one host at a time
 

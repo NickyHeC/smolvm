@@ -21,6 +21,7 @@ macOS arm64, where throwaway-machine's says `result=blocked`; its `SKILL.md` say
 | Run code you do not trust, with no network | [throwaway-machine](throwaway-machine/SKILL.md) | `throwaway-machine/scripts/preflight.sh --mounts 2 --ports 0` |
 | Keep a machine you come back to | [dev-env](dev-env/SKILL.md) | `dev-env/scripts/preflight.sh` |
 | Give a workload an API key it never reads | [credentials](credentials/SKILL.md) | `credentials/scripts/preflight.sh --var <HOST_ENV_VAR> --host <api.example.com>` |
+| Go back to how a machine was a few minutes ago | [rewind](rewind/SKILL.md) | `rewind/scripts/preflight.sh --dir <dir>` |
 | Leave nothing running | [teardown](teardown/SKILL.md) | `teardown/scripts/verify-clean.sh` |
 
 ## Skill packets
@@ -36,6 +37,7 @@ macOS arm64, where throwaway-machine's says `result=blocked`; its `SKILL.md` say
 | [install](install/README.md) | installing smolvm and proving the host can boot a microVM | [SKILL.md](install/SKILL.md) |
 | [local-api](local-api/README.md) | driving the machine lifecycle over the local HTTP API | [SKILL.md](local-api/SKILL.md) |
 | [pack](pack/README.md) | packing an image or a machine into a portable artifact | [SKILL.md](pack/SKILL.md) |
+| [rewind](rewind/README.md) | a rolling window of captures on a timer, and bringing a machine back from any capture in the past 10 minutes | [SKILL.md](rewind/SKILL.md) |
 | [teardown](teardown/README.md) | what state exists, where it lives, and how to leave nothing running | [SKILL.md](teardown/SKILL.md) |
 | [throwaway-machine](throwaway-machine/README.md) | running untrusted code in a throwaway machine, with egress granted one host at a time | [SKILL.md](throwaway-machine/SKILL.md) |
 
