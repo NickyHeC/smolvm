@@ -37,7 +37,7 @@ transferred result, never an exit code.**
 **1. Preflight.**
 
 ```bash
-scripts/preflight.sh
+scripts/preflight.sh cuda
 ```
 
 Read-only: it starts no VM and touches no NVIDIA state. It reports the GPU and driver version,

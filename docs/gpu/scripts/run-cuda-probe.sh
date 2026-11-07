@@ -45,7 +45,7 @@ if printf '%s' "$out" | grep -qi 'name = .*emulation'; then
     printf 'result=cpu_emulation_not_gpu\n'
     printf 'The guest reached a device and the round trip returned, but the device is\n'
     printf 'smolvm CPU emulation, not an NVIDIA GPU. Nothing here was accelerated. Run\n'
-    printf 'scripts/preflight.sh: gpu_present=no says the same thing without starting a VM.\n'
+    printf 'scripts/preflight.sh cuda: gpu_present=no says the same thing without starting a VM.\n'
     exit 1
 fi
 # A run that reached no device at all names none, so it must not read as a GPU.
@@ -55,7 +55,7 @@ if [ "$fail" -eq 0 ]; then
     printf 'result=cuda_ok\n'
 else
     printf 'result=FAILED\n'
-    printf 'Run scripts/preflight.sh. The three causes, and none of them says so in the error:\n'
+    printf 'Run scripts/preflight.sh cuda. The three causes, and none of them says so in the error:\n'
     printf '  - A guest too large for this host. The probe asks for 8192 MiB, and a host that cannot\n'
     printf '    boot that inside the fixed 30 s fails with "agent did not become ready within 30\n'
     printf '    seconds". Run smolvm machine run --mem 8192 --net --image alpine -- true: if that\n'

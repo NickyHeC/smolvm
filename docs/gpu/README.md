@@ -31,7 +31,7 @@ apart, and `scripts/run-cuda-probe.sh` reports `device_kind=cpu_emulation` and
 `result=cpu_emulation_not_gpu` rather than a pass. Seen on macOS arm64 on v1.16.1, v1.18.2 and
 v1.22.2 and on Linux aarch64 on v1.18.2.
 
-**To answer "can this machine run CUDA", run the preflight and nothing else.** It reports
+**To answer "can this machine run CUDA", run `scripts/preflight.sh cuda` and nothing else.** It reports
 `gpu_present`, the driver version and whether your user can open `/dev/kvm`, and it starts no VM.
 Reaching for the probe on a GPU-less host starts a machine and comes back with something that reads
 like a yes.
