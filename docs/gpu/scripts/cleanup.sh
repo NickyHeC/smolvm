@@ -13,7 +13,7 @@
 
 set -uo pipefail
 
-PACKET="gpu-cuda"
+PACKET="gpu"
 PREFIX="smolskill-"
 
 SMOLVM="${SMOLVM:-$(command -v smolvm 2>/dev/null)}"

@@ -170,6 +170,6 @@ Get-Content "$env:LOCALAPPDATA\smolvm\vms\<hash>\agent-console.log" -Tail 40
   libkrun gives x86_64 guests IRQs 5 to 23 (#1521); not run on Windows, so its ceiling is unmeasured.
 - **Path length was not a problem** in the paths this run exercised: a volume mount from a
   237-character directory worked and nothing broke approaching 260 characters.
-- **The rest of the platform picture**, in the `dev-env`, `local-api` and `gpu-cuda` packets.
+- **The rest of the platform picture**, in the `dev-env`, `local-api` and `gpu` packets.
   `--net` gives a real `eth0` with inbound port-forwarding, and `--cuda` reaches a real NVIDIA
   GPU. Vulkan (`--gpu`) is accepted and silently does nothing.

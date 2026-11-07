@@ -134,7 +134,7 @@ included, so read the plain report first.
 - **macOS arm64**: verified on v1.29.0. The path-length rule in `references/traps.md` applies to
   every install.
 - **Linux aarch64**: verified on v1.18.2, and run once on v1.22.2. **Linux x86_64**: verified on
-  v1.14.2, and installed on v1.14.6 for the gpu-cuda run. The `kvm` group check applies to every
+  v1.14.2, and installed on v1.14.6 for the `gpu` packet's CUDA run. The `kvm` group check applies to every
   fresh host.
 - **Intel Mac**: the installer accepts macOS 11 or later on Intel and then stops at the download,
   because no `darwin-x86_64` archive is published for v1.29.0; `preflight.sh` says so.
@@ -228,10 +228,10 @@ verified on v1.18.2.
   reported from outside and reproduced by forcing the state, but the unprivileged install itself
   has not been run.
 - **The scripts on Linux x86_64**; that arm was last verified on v1.14.2 (install and boot) and
-  installed on v1.14.6 for the gpu-cuda run.
+  installed on v1.14.6 for the `gpu` packet's CUDA run.
 
 ## Related packets
 
 - `teardown` for the full removal sequence, and for what a leak check must exclude.
 - `throwaway-machine` for running untrusted work in a throwaway machine, which assumes this boot.
-- `dev-env`, `local-api`, `docker-in-machine`, `gpu-cuda` and `pack` all assume it too.
+- `dev-env`, `local-api`, `docker-in-machine`, `gpu` and `pack` all assume it too.

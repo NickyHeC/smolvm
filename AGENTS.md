@@ -343,7 +343,7 @@ vsock, separate from `--gpu`. The host needs a working NVIDIA driver and no CUDA
 toolkit; the guest gets no `/dev/nvidia*`, only Driver and Runtime API shims at
 `/opt/smolvm-cuda` that need a glibc image. Without an NVIDIA driver the host
 answers with a CPU-emulation device, so check the device name, not the exit code.
-Coverage: `docs/gpu.md`; the tested procedure: `docs/gpu-cuda/`.
+Coverage: `docs/gpu.md`; the tested procedure: `docs/gpu/`.
 
 ## Secrets
 

@@ -1,5 +1,5 @@
 ---
-name: gpu-cuda
+name: gpu
 description: Runs CUDA compute workloads inside a smolvm microVM against a real host NVIDIA GPU, using smolvm's --cuda API remoting. Use when a workload in a machine needs a GPU; when nvidia-smi or /dev/nvidia* is missing inside a --cuda guest; when a CUDA program in a machine exits zero but seems not to touch the device; when the shim will not load in an Alpine image; or when checking whether CUDA is available on a given platform, including Windows. Do not use it for Vulkan graphics (--gpu), which is a separate feature, in docs/gpu.md, and do not expect it on a Mac, which has no CUDA driver.
 ---
 

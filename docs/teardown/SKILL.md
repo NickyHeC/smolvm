@@ -13,7 +13,7 @@ needs this more than it needs any single feature.
 The Linux runs used the scripts of their date; this version's preflight and cleanup scripts ran
 on Linux aarch64 on v1.22.2 on 2026-10-03.
 
-The cleanup scripts of credentials, dev-env, docker-in-machine, gpu-cuda and install are this
+The cleanup scripts of credentials, dev-env, docker-in-machine, gpu and install are this
 packet's `scripts/cleanup.sh` with the `PACKET=` line changed; branch-and-checkpoint, local-api, pack
 and throwaway-machine build on it and add flags of their own.
 

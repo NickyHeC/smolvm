@@ -32,7 +32,7 @@ macOS arm64, where throwaway-machine's says `result=blocked`; its `SKILL.md` say
 | [dev-env](dev-env/README.md) | a machine you come back to, and what survives a stop and start | [SKILL.md](dev-env/SKILL.md) |
 | [coding-agent](coding-agent/README.md) | a coding agent with full permissions inside a machine, the project mounted | [SKILL.md](coding-agent/SKILL.md) |
 | [docker-in-machine](docker-in-machine/README.md) | a Docker daemon inside a machine, for tools that call Docker themselves | [SKILL.md](docker-in-machine/SKILL.md) |
-| [gpu-cuda](gpu-cuda/README.md) | the guest's CUDA Driver API calls, and Runtime API calls through a `libcudart` shim, remoted to the host's NVIDIA GPU | [SKILL.md](gpu-cuda/SKILL.md) |
+| [gpu](gpu/README.md) | the guest's CUDA Driver API calls, and Runtime API calls through a `libcudart` shim, remoted to the host's NVIDIA GPU | [SKILL.md](gpu/SKILL.md) |
 | [install](install/README.md) | installing smolvm and proving the host can boot a microVM | [SKILL.md](install/SKILL.md) |
 | [local-api](local-api/README.md) | driving the machine lifecycle over the local HTTP API | [SKILL.md](local-api/SKILL.md) |
 | [pack](pack/README.md) | packing an image or a machine into a portable artifact | [SKILL.md](pack/SKILL.md) |

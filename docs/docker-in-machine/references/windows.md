@@ -16,7 +16,7 @@ Error: io operation failed: A connection attempt failed because the connected pa
   host has failed to respond. (os error 10060)
 ```
 
-Neither is a kernel result. This is the same large-image pull failure the `gpu-cuda` packet's
+Neither is a kernel result. This is the same large-image pull failure the `gpu` packet's
 Windows page records for `nvidia/cuda`, and it stops before any kernel feature is exercised, so
 **nothing below was confirmed or refuted on v1.14.6.** Everything on this page remains the v1.14.2
 record.
