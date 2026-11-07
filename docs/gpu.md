@@ -6,6 +6,8 @@ smolvm exposes the host GPU to guests via **virtio-gpu / Venus** (Vulkan-over-vi
 ANGLE (Intel, Vulkan 1.4 (Virtio-GPU Venus (Intel(R) UHD Graphics ...)), venus)
 ```
 
+The [gpu packet](gpu/README.md) has the tested procedure and what each host did.
+
 ## Host requirements
 
 **macOS**: virglrenderer and MoltenVK are bundled in the smolvm distribution. No extra installs needed.

@@ -1,7 +1,8 @@
 # CUDA runs, as recorded
 
-The eval prompts and the end-to-end re-verifications behind `SKILL.md`. The block "under step 2
-above" is the A10 output in `SKILL.md`.
+The eval prompts and the two end-to-end re-verifications behind `SKILL.md`'s CUDA path. The block
+"under step 2 above" is the A10 output in `SKILL.md`, and every `scripts/preflight.sh` here ran
+before the script took a path argument. The 2026-11-06 no-GPU run is in `SKILL.md`.
 
 ## Eval prompts, and what they produced
 

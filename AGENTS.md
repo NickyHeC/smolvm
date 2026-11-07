@@ -334,7 +334,8 @@ over virtio-gpu/Venus, which ANGLE can use for WebGL; `--gpu-vram` sizes its
 shared memory (default 4096 MiB). macOS bundles what it needs; Linux needs
 virglrenderer and a Vulkan driver from the system packages. Not available on
 Windows, where `--gpu` has no effect. Host packages, a one-shot check, a
-headless Chromium example and when to set `VK_ICD_FILENAMES`: `docs/gpu.md`.
+headless Chromium example and when to set `VK_ICD_FILENAMES`: `docs/gpu.md`; the
+tested procedure: `docs/gpu/`.
 
 ## CUDA (experimental)
 

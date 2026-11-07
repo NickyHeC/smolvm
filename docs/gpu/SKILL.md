@@ -1,52 +1,112 @@
 ---
 name: gpu
-description: Runs CUDA compute workloads inside a smolvm microVM against a real host NVIDIA GPU, using smolvm's --cuda API remoting. Use when a workload in a machine needs a GPU; when nvidia-smi or /dev/nvidia* is missing inside a --cuda guest; when a CUDA program in a machine exits zero but seems not to touch the device; when the shim will not load in an Alpine image; or when checking whether CUDA is available on a given platform, including Windows. Do not use it for Vulkan graphics (--gpu), which is a separate feature, in docs/gpu.md, and do not expect it on a Mac, which has no CUDA driver.
+description: Gives a smolvm microVM a GPU and proves it works, down one of two paths. Vulkan (--gpu) is for graphics and compute shaders, through virtio-gpu and Venus. CUDA (--cuda) is for CUDA programs on a host NVIDIA GPU, through API remoting. Use when a workload in a machine needs a GPU; when asked whether a host can run Vulkan or CUDA in a machine; when vulkaninfo fails or names llvmpipe in a guest; when nvidia-smi or /dev/nvidia* is missing inside a --cuda guest; when a CUDA program exits zero but seems not to touch the device; when the CUDA shim will not load in an Alpine image; or when WebGL is unavailable in a guest on a Mac.
 ---
 
-# CUDA inside a machine
+# A GPU inside a machine
 
-Verified on **smolvm v1.22.2** against an **NVIDIA GeForce RTX 4050** (driver 32.0.15.6626,
-Windows x86_64), 2026-10-03, and on **v1.14.6** against an **NVIDIA A10** (driver 580.105.08,
-Linux x86_64, kernel 6.8.0-1046-nvidia). Done means a program in the VM opens the device, creates a context, and moves
-data to and from it.
-The Linux runs used the scripts of their date; this version's preflight and cleanup scripts ran
-on Linux aarch64 on v1.22.2 on 2026-10-03.
+Two features that share a word. **Want graphics or compute shaders? Take the Vulkan path. Want a
+CUDA program to run? Take the CUDA path.** `--gpu` does not provide CUDA, and `--cuda` does not
+provide Vulkan. Done means a program in the guest named a real device and handed back what the
+device computed or copied. `README.md` says why each path checks what it checks.
 
-> **The GPU path was last run end to end on Linux x86_64 on v1.14.6**, on an A10: the
-> preflight, the probe against two glibc images, all three eval prompts and the cleanup. **Windows
-> was re-run on v1.22.2** against an RTX 4050: the probe, the two absences, the shim in a plain
-> `alpine` guest, and a vector add over 16777216 elements; see `references/windows.md`. The macOS
-> arm64 and Linux aarch64 hosts have no NVIDIA hardware, so what runs there is the no-GPU answer,
-> on v1.22.2 on macOS and v1.18.2 on Linux aarch64: the preflight reports `gpu_present=no` without
-> starting anything, and `--cuda` reaches a CPU emulation device, which the probe names rather than
-> passing. "What was not run" lists every remaining step.
-
-## How this works, and why the checks are shaped this way
-
-The guest gets **no NVIDIA driver and no `/dev/nvidia*`**. A compatibility `libcuda.so.1` is
-injected at `/opt/smolvm-cuda` inside the guest and forwards CUDA driver calls over vsock to a host
-daemon that owns the device. Nothing is needed on the host beyond a working NVIDIA driver: no extra
-packages, no container toolkit, no device plugin.
-
-Because the API is **remoted rather than passed through**, a program can start, link against
-`libcuda.so.1` and exit zero without a GPU ever being reached. **Assert a device name and a
-transferred result, never an exit code.**
+| Path | Platform | Status on v1.33.0, 2026-11-06 | Last GPU run |
+|---|---|---|---|
+| Vulkan | macOS arm64, Apple M4 | **VERIFIED** for device, compute shader and offscreen render; WebGL through Chromium does not work there | v1.33.0 |
+| Vulkan | Linux | **PARTIAL**: ran only on an aarch64 host with no GPU, where the preflight blocks and the guest's `vkCreateInstance` fails | none |
+| Vulkan | Windows | **N/A**: `--gpu` has no effect | none |
+| CUDA | macOS | **N/A**: no CUDA driver. The preflight's refusal and the emulation device were run | none |
+| CUDA | Linux with an NVIDIA GPU | **not run** | v1.14.6, A10, 2026-09-11 |
+| CUDA | Windows with an NVIDIA GPU | **not run** | v1.22.2, RTX 4050, 2026-10-03 |
+| CUDA | Linux aarch64, no NVIDIA GPU | **PARTIAL**: the preflight's refusal, and the emulation device by hand at 1024 MiB; the probe's 8192 MiB did not boot, nor did a plain `machine run` at that size | none |
 
 ## Procedure
 
-**1. Preflight.**
+```
+- [ ] 1. preflight.sh vulkan|cuda     can this host take the path, with no VM started
+- [ ] 2. run-vulkan-probe.sh          or run-cuda-probe.sh
+- [ ] 3. cleanup.sh --purge           nothing left running
+```
+
+**1. Preflight, for the path you want.**
 
 ```bash
+scripts/preflight.sh vulkan
 scripts/preflight.sh cuda
 ```
 
-Read-only: it starts no VM and touches no NVIDIA state. It reports the GPU and driver version,
-whether your user can open `/dev/kvm`, and the host's own `libcuda` count. **If the question is "can
-this machine run CUDA", the preflight answers it and nothing else needs to run.** `result=blocked`
-with `gpu_present=no` saves the most time, because on a host with no NVIDIA GPU the probe starts a
-VM, reaches a CPU emulation device and returns a passing round trip, which reads like a yes.
-Verified on macOS arm64 on v1.16.1, v1.18.2 and v1.22.2: `gpu_present=no` and `unsupported=cuda`;
-on v1.22.2 the note read `macOS has no CUDA driver, so --cuda has nothing to reach here.`
+Read-only: it starts no VM and touches no GPU state. The last line is `result=ready` or
+`result=blocked`, and a `note=` says why. **If the question is "can this host do it", the preflight
+answers it and nothing else needs to run.** An M4 on v1.33.0:
+
+```
+platform=darwin-aarch64
+accel=hvf
+accel_access=ok
+host_renderer=bundled
+result=ready
+```
+
+Then step 2 of your path.
+
+### The Vulkan path
+
+macOS needs nothing installed: the release bundles virglrenderer and MoltenVK. Linux needs
+virglrenderer and a Vulkan driver from the system packages, in [the table in GPU
+acceleration](../gpu.md#host-requirements), and the release bundles neither.
+
+**2. Run the probe.**
+
+```bash
+scripts/run-vulkan-probe.sh                        # alpine
+scripts/run-vulkan-probe.sh debian:trixie-slim     # a glibc image
+```
+
+It mounts `scripts/` into a `--gpu` machine and runs `vulkan-guest.sh` there, which installs the
+tools, compiles a compute shader and `vulkan-compute.c`, and runs `vkmark`. On the M4 on v1.33.0:
+
+```
+  packages=0
+    deviceType         = PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
+    deviceName         = Virtio-GPU Venus (Apple M4)
+    driverName         = venus
+    driverInfo         = Mesa 26.1.6
+  device=Virtio-GPU Venus (Apple M4)
+  values_checked=1024
+  values_wrong=0
+  compute=ok
+      Device Name:    Virtio-GPU Venus (Apple M4)
+  [vertex] duration=1: FPS: 2638 FrameTime: 0.379 ms
+  [shading] duration=1: FPS: 2693 FrameTime: 0.371 ms
+                                     vkmark Score: 2665
+device=Virtio-GPU Venus (Apple M4)
+device_kind=venus
+compute=ok
+graphics=ok vkmark_score=2665
+result=vulkan_ok
+```
+
+`values_wrong=0` is the line that proves the device ran work: the shader wrote 1024 values and the
+guest read them back and compared each one. `vkmark` draws frames offscreen through a graphics
+pipeline and counts them; it does not check pixels, so `graphics=ok` means frames were rendered on
+the named device, and the frame rates are no benchmark.
+
+`device_kind=software` with `result=software_not_gpu` means the work ran on `llvmpipe`; the script
+exits 1 there, though the shader's values come back right. `result=compute_ok_graphics_not_run`
+means the image has no `vkmark` package: Debian 12 ran the compute shader that way.
+
+On a glibc image smolvm bind-mounts its own Venus driver at `/opt/smolvm-vulkan` and sets
+`VK_DRIVER_FILES` to it, so the image needs no Mesa: Debian 13 reported Mesa 24.2.8. On Alpine the
+driver is the `mesa-vulkan-virtio` package, Mesa 26.1.6 here.
+
+### The CUDA path
+
+The guest gets **no NVIDIA driver and no `/dev/nvidia*`**. A compatibility `libcuda.so.1` is
+injected at `/opt/smolvm-cuda` and forwards CUDA driver calls over vsock to a host daemon that owns
+the device. The host needs a working NVIDIA driver and nothing else: no extra packages, no container
+toolkit, no device plugin. `result=blocked` with `gpu_present=no` saves the most time, because on a
+host with no NVIDIA GPU the probe starts a VM, reaches a CPU emulation device and returns a passing
+round trip, which reads like a yes.
 
 **2. Run the probe.**
 
@@ -56,16 +116,7 @@ scripts/run-cuda-probe.sh <other glibc image>
 ```
 
 It mounts `scripts/` into the guest and runs `cuda-probe.py` under `--cuda`, then asserts two
-values from the output:
-
-```
-device_named=ok
-data_roundtrip=ok
-device_kind=gpu
-result=cuda_ok
-```
-
-On the A10 on v1.14.6, `cuda-probe.py`'s own output was:
+values from the output. On the A10 on v1.14.6, `cuda-probe.py`'s own output was:
 
 ```
 load_shim -> ok /opt/smolvm-cuda/libcuda.so.1
@@ -81,102 +132,137 @@ roundtrip first 16 bytes match: True
 cuMemFree    -> 0
 ```
 
-`roundtrip ... True` is the one that matters. It is the only line that proves bytes reached the
-device.
+and the script's: `device_named=ok`, `data_roundtrip=ok`, `device_kind=gpu`, `result=cuda_ok`.
+`roundtrip ... True` proves bytes reached the device, once the device name says it is not
+`smolvm CPU emulation device`, which is `device_kind=cpu_emulation` and
+`result=cpu_emulation_not_gpu`. The M4 on v1.33.0 returned exactly that.
 
-**3. Clean up.** CUDA images are large.
+`references/cuda-runs.md` has the eval prompts and the end-to-end re-verifications.
+`references/windows.md` has the Windows run, which goes by hand because `scripts/*.sh` are bash, and
+a BLAS call that returns 0 and writes nothing there.
+
+### Both paths
+
+**3. Clean up.**
 
 ```bash
 scripts/cleanup.sh --purge
-smolvm machine prune --name <NAME> --all   # any persistent --cuda machine you kept
+smolvm machine prune --name <NAME> --all   # any persistent GPU machine you kept
 ```
 
 `cleanup.sh` waits up to 20 seconds, polling the machine list, and prints `waiting=up to 20s`
-first: an ephemeral machine's entry retires after its run returns.
+first: an ephemeral machine's entry retires after its run returns. The probe runs are ephemeral and
+leave nothing to prune; `machine prune` takes a machine name and is rejected without one.
 
-The probe runs are ephemeral and leave nothing to prune; `machine prune` takes a machine name and
-is rejected without one.
-
-`--cuda` changes nothing on the host: the shim is injected inside the guest only. Verified after a
-series of CUDA runs plus a Kubernetes install and teardown on the same host, where
-`nvidia-smi` still reported the device and a whole-filesystem sweep for `*smolvm*` came back empty.
+Neither probe changes the host. `--cuda` was measured: after a series of CUDA runs plus a Kubernetes
+install and teardown, `nvidia-smi` still reported the device and a whole-filesystem sweep for
+`*smolvm*` came back empty. On Linux the Vulkan path's host packages are yours to remove.
 
 ## Traps
 
 Full detail in `references/traps.md`.
 
-- **A zero exit code proves nothing.** The remoted API is why.
-- **A device name and a passing round trip do not prove a GPU either.** When the host cannot load
-  the NVIDIA driver library, the host side answers with a CPU emulation device: `cuInit -> 0`,
-  `cuDeviceGetCount -> 0 count = 1`, `cuDeviceGetName -> 0 name = smolvm CPU emulation device`,
-  `total MiB = 1024`, and `roundtrip first 16 bytes match: True`. **The device name is the
-  discriminator.** `scripts/run-cuda-probe.sh` now reports `device_kind=cpu_emulation` and
-  `result=cpu_emulation_not_gpu` for it instead of `result=cuda_ok`.
-- **`nvidia-smi` is absent inside the guest and that is correct.** So is `/dev/nvidia*`. Neither is
-  a useful check.
+**Vulkan**
+
+- **`--gpu` boots on a host that cannot run Vulkan, and says nothing.** The machine exits 0 and has
+  `/dev/dri/card0` and `renderD128`. Assert the device, never `ls /dev/dri`.
+- **WebGL through Chromium does not work on the M4.** `getContext("webgl")` returns null, while
+  `chromium --screenshot` still exits 0 and writes a PNG. A screenshot proves nothing.
+- **OpenGL in a guest on a Mac is software**: `eglinfo` names `llvmpipe`. The bundled renderer is
+  Venus only, so use Vulkan directly.
+- **`ERROR_OUT_OF_HOST_MEMORY` is not about memory.** It is what the guest got on a Linux host with
+  no GPU, on Alpine and on Debian 12.
+- **`virglrenderer0` is not a package** on Ubuntu 24.04, Debian 12 or Debian 13. `libvirglrenderer1`
+  is, at 1.0.0, 0.10.4 and 1.1.0.
+- **An NVIDIA host needs virglrenderer 1.2.0 or newer**, and none of those three ships it. No NVIDIA
+  host has run this path.
+
+**CUDA**
+
+- **A zero exit code proves nothing, and neither does a device name alone.** See step 2.
+- **`nvidia-smi` is absent inside the guest and that is correct.** So is `/dev/nvidia*`.
 - **Use a glibc image and load the shim by absolute path.** The shim is glibc, so an Alpine guest
-  cannot load it, and relying on the loader path picks up whatever the image carries.
+  cannot load it.
 - **A fresh GPU cloud instance does not have KVM access for your user**, and the installer says the
   install succeeded anyway. `sg kvm -c` applies the group without a logout.
 - **`agent did not become ready within 30 seconds` from the probe is about memory, not the GPU.**
-  The probe asks for 8192 MiB. On v1.18.2 a Linux aarch64 host with no NVIDIA GPU failed that way,
-  reached the CPU emulation device with the same probe at 1024 MiB, and failed the same way on a
-  plain `machine run --mem 8192` with no `--cuda` at all.
-- **`--cuda` and `--gpu` are different features.** `--cuda` is compute over vsock; `--gpu` is
-  Vulkan over virtio-gpu, which reached a Venus device on macOS arm64 on v1.18.2 and is covered by
-  `docs/gpu.md` in the repository. On Windows, on v1.14.6 and v1.22.2, `--gpu` boots and the guest
-  has no GPU device; nothing reports that the flag was dropped (`references/windows.md`).
+  The probe asks for 8192 MiB.
 
 ## Security defaults, and why they are the defaults
 
-- **The guest never gets the device, and that is the isolation.** No `/dev/nvidia*` is passed
-  through, so a workload in the machine cannot reach the driver directly, reprogram it, or see
-  another VM's device state through it. What it gets is a forwarded API surface.
-- **What that surface exposes is still real.** A remoted CUDA call runs against the host's driver
-  and the host's memory allocator, so treat a `--cuda` machine as having a channel to a privileged
-  host component. The VM boundary is what makes that acceptable; it is not zero authority.
-- **Nothing here needs root or a container toolkit on the host.** If a procedure asks you to
-  install a device plugin or run the CLI as root to get CUDA working, it is not this procedure.
+- **The guest never gets the NVIDIA device under `--cuda`, and that is the isolation.** No
+  `/dev/nvidia*` is passed through, so a workload in the machine cannot reach the driver directly,
+  reprogram it, or see another VM's device state through it. What it gets is a forwarded API surface.
+- **What each path exposes is still real.** A remoted CUDA call runs against the host's driver and
+  memory allocator, and a Venus call reaches the host's renderer and Vulkan driver. Treat a GPU
+  machine as having a channel to a privileged host component. The VM boundary is what makes that
+  acceptable; it is not zero authority.
+- **Nothing here needs root or a container toolkit on the host**, past installing Linux's Vulkan
+  packages. If a procedure asks you to install a device plugin or run the CLI as root, it is not
+  this procedure.
 - **The scripts wrap the public CLI only**, mount only this packet's own `scripts/` directory
   read-only into the guest, and cleanup deletes only names it recorded under the `smolskill-`
   prefix.
 
-## Platform arms
+## Eval prompts, and what they produced
 
-- **Linux x86_64 with an NVIDIA GPU**: **verified on an A10 on v1.14.6** (driver 580.105.08,
-  kernel 6.8.0-1046-nvidia), preflight through cleanup, with the probe run against two glibc
-  images.
-- **Windows x86_64 with an NVIDIA GPU**: **verified on an RTX 4050 on v1.22.2**, on 2026-10-03,
-  and on v1.14.6 on 2026-09-11 (driver 32.0.15.6626), including the device name and a 1 MiB device round trip.
-  `references/windows.md`.
-- **macOS arm64 and Intel**: **not applicable.** macOS has no CUDA driver, so `--cuda` has nothing
-  to reach. The preflight says so rather than letting a run time out.
-- **Linux aarch64**: no NVIDIA hardware on the host tested. The preflight and the probe
-  against the CPU emulation device were run on v1.18.2. On v1.22.2 the probe timed out on that
-  host's memory before reaching the device.
-- **Multi-GPU, branches of a `--cuda` machine, machines restored from its checkpoint, and a
-  training or inference workload**: not run anywhere.
+**1. "Can this Mac run Vulkan shaders in a machine?" (v1.33.0, M4)**
 
-`references/cuda-runs.md` has the eval prompts and the end-to-end re-verifications.
+`preflight.sh vulkan` said `result=ready`, and the probe's output is the block under the Vulkan
+path's step 2, from this run.
+
+**2. "Can this Linux box run Vulkan in a machine?" (v1.33.0, Lima `linux-kvm`, Ubuntu 24.04 aarch64,
+no GPU)**
+
+```
+platform=linux-aarch64
+accel_access=ok
+host_virglrenderer=yes
+host_virglrenderer_version=1.0.0-1ubuntu2
+render_node=no
+note=no /dev/dri render node and no NVIDIA GPU; on such a host on v1.33.0 the machine boots and the guest's vkCreateInstance fails with ERROR_OUT_OF_HOST_MEMORY
+host_vulkan_device=unknown
+note=no vulkaninfo on this host, so its Vulkan driver was not checked
+result=blocked
+```
+
+Past the preflight, the probe reported `device_kind=none`, `compute=FAIL` and `result=FAILED`, and
+the guest's error was `vkCreateInstance failed with ERROR_OUT_OF_HOST_MEMORY`.
+
+**3. "Can this machine run CUDA?" (v1.33.0, the M4)**
+
+```
+platform=darwin-aarch64
+gpu_present=no
+unsupported=cuda
+note=macOS has no CUDA driver, so --cuda has nothing to reach here.
+result=blocked
+```
 
 ## What was not run
 
-- **The preflight and the cleanup on Windows.** `scripts/*.sh` are bash and do not run
-  there, so the Windows runs issued the probe and the eval prompts by hand.
+**On v1.33.0, no NVIDIA GPU ran either path, and no Linux host with any GPU ran Vulkan.** Linux
+x86_64 was not run at all this time. `docs/gpu.md` reports a Venus device on Linux with an Intel GPU;
+this packet has not repeated that.
+
+- **WebGL on any Linux host.**
+- **This `preflight.sh` on an NVIDIA host.** Its Vulkan check for one ran against a stand-in
+  `nvidia-smi`; its CUDA checks are the ones the A10 ran.
+- **Vulkan on an Intel Mac**, and any Apple chip but the M4.
+- **`--gpu-vram`, a Smolfile's `gpu = true`, and a persistent `--gpu` machine.** The probe uses an
+  ephemeral `machine run --gpu`; the flags are in `docs/gpu.md`.
+- **The preflight and the cleanup on Windows**, which are bash.
 - **`--cuda` with a CUDA base image** (`nvidia/cuda:...`), and the `apt-get install -y python3`
-  those images need. Both probe runs used a Python image, which is what the packet recommends.
+  those images need.
 - **The `sg kvm -c` single-command remedy.** The state it addresses, a user who cannot open
   `/dev/kvm`, did reproduce on a fresh instance; the fix applied was a group change and a new
   login session.
-
-Not run on any platform or release:
-
-- **Branches and restores of a `--cuda` machine.** The docs site's `introduction/concepts/gpu.md`
+- **Branches and restores of a GPU machine.** The docs site's `introduction/concepts/gpu.md`
   (smolmachines.com/docs) gives this as a reason for the remoting design, and a restored CUDA
   machine has its own shorter 10 s ready timeout.
 - **Multi-GPU**, and contention between two machines sharing one device.
-- **A training or inference workload.** The furthest run is the vector add on Windows; the rest
-  are driver-API assertions, and say nothing about how much of the CUDA API surface is
+- **A training or inference workload.** The furthest CUDA run is the vector add on Windows, and the
+  furthest Vulkan run is the shader and the frames above. Neither says how much of either API is
   implemented.
 
 ## Related packets
