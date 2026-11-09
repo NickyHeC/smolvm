@@ -223,10 +223,10 @@ Read these when the situation calls for them; they are not needed for a normal r
   v1.24.0. Before v1.20.2 the offline shape is unavailable (#1192, reproduced
   3 of 3 on v1.18.2), and `references/macos.md` gives the routes run on v1.18.2.
 - **Windows x86_64**: the offline shape is unavailable for a different reason, the bake never
-  completes. `references/windows.md`, **re-run on 2026-10-03 against v1.22.2** on Windows 11 Home
-  build 10.0.26200 UBR 9457: the mount, the artifact directory and the network-off refusal
-  confirmed, the bake still did not complete inside a five minute cap in any of four shapes, and a
-  plain foreground run interrupted by Ctrl-C or a kill left its VM running.
+  completes. `references/windows.md`, **re-run on 2026-11-09 against v1.34.0** on Windows 11 Home
+  build 10.0.26200 UBR 9711: the mount, the artifact directory and the network-off refusal
+  confirmed, the bake still did not complete inside a five minute cap with or without a mount, and
+  a plain foreground run whose CLI was killed left its VM running (on v1.22.2, by Ctrl-C too).
 
 ## Eval prompts, and what they produced
 
