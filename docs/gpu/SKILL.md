@@ -20,6 +20,12 @@ device computed or copied. `README.md` says why each path checks what it checks.
 | CUDA | Windows with an NVIDIA GPU | **not run** | v1.22.2, RTX 4050, 2026-10-03 |
 | CUDA | Linux aarch64, no NVIDIA GPU | **PARTIAL**: the preflight's refusal, and the emulation device by hand at 1024 MiB; the probe's 8192 MiB did not boot, nor did a plain `machine run` at that size | none |
 
+**Re-run on v1.34.0, 2026-11-09**, from the checksummed release under fresh `HOME`s: on the M4, twice,
+`result=vulkan_ok` on `alpine` (Mesa 26.1.6, `vkmark` 2733 and 2154) and on `debian:trixie-slim`
+(Mesa 24.2.8), and the CUDA refusal and `result=cpu_emulation_not_gpu`; on Lima once, the same
+`result=blocked`, `vkCreateInstance` returning -1, and the 8192 MiB probe not booting. WebGL and the
+1024 MiB emulation device on Linux were not re-run.
+
 ## Procedure
 
 ```

@@ -19,7 +19,7 @@ esac
 # on a host with no GPU, and CUDA's GPU run is the older one.
 case "$path-$(uname -s)" in
     cuda-Linux) VERIFIED_VERSION="1.14.6" ;;
-    *)          VERIFIED_VERSION="1.33.0" ;;
+    *)          VERIFIED_VERSION="1.34.0" ;;
 esac
 
 emit() { printf '%s=%s\n' "$1" "$2"; }
