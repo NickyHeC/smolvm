@@ -138,8 +138,8 @@ included, so read the plain report first.
   fresh host.
 - **Intel Mac**: the installer accepts macOS 11 or later on Intel and then stops at the download,
   because no `darwin-x86_64` archive is published for v1.29.0; `preflight.sh` says so.
-- **Windows x86_64**: `references/windows.md`, **re-run on 2026-10-03 against v1.22.2** on
-  Windows 11 Home build 10.0.26200 UBR 9457, where it confirmed. The
+- **Windows x86_64**: `references/windows.md`, **re-run on 2026-11-09 against v1.34.0** on
+  Windows 11 Home build 10.0.26200 UBR 9711, where it confirmed. The
   three facts that break a Unix-shaped script are there: the zip unpacks into a nested versioned
   folder, state lives in `%LOCALAPPDATA%\smolvm` and cannot be moved, and a script must never
   capture `machine start` output because it never returns.

@@ -173,11 +173,11 @@ Full detail in `references/traps.md`. The ones that cost the most:
   check the mount source first (the `install` packet's traps have the numbers).
 - **macOS arm64**: the scripts were run here on v1.29.0 as shipped, and every check passed.
 - **Linux x86_64**: verified on v1.14.2 on an NVIDIA A10 cloud host, not re-run since.
-- **Windows x86_64**: `references/windows.md`, **re-run on 2026-10-03 against v1.22.2** on
-  Windows 11 Home build 10.0.26200 UBR 9457. Create, three stops and three starts, with a marker read back after each start: **a
+- **Windows x86_64**: `references/windows.md`, **re-run on 2026-11-09 against v1.34.0** on
+  Windows 11 Home build 10.0.26200 UBR 9711. Create, three stops and three starts, with a marker read back after each start: **a
   stopped machine starts again and its state survives**, as on v1.14.6, where on v1.14.2 it did
-  not. That page also carries the WHP device ceiling a Windows preflight needs through v1.22.2:
-  four `-v` mounts, three when a port is published.
+  not. That page also carries the WHP device ceiling a Windows preflight needed through v1.22.2,
+  four `-v` mounts and three when a port is published; v1.34.0 boots eight with two ports.
 
 ## Eval prompts, and what they produced
 
