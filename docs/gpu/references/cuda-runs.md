@@ -76,6 +76,16 @@ note=libcuda.so.1 is not in this host's loader cache; --cuda loads it on the hos
 result=blocked
 ```
 
+## Re-verified on v1.34.0, the GPU path
+
+Run 2026-11-09 PT against v1.34.0 from the published release, checksum checked, under fresh
+isolated `HOME`s on an **NVIDIA A10** cloud instance (Ubuntu 22.04 x86_64, 30 vCPU Intel Xeon
+Platinum 8358, 222 GiB, kernel 6.8.0-1064-nvidia, driver 580.105.08), twice. `preflight.sh cuda`
+said `gpu_present=yes` and `result=ready`; `run-cuda-probe.sh` on `python:3.12-slim` in both
+passes and on `python:3.12-bookworm` once printed `name = NVIDIA A10`, `total MiB = 22587` and
+`roundtrip first 16 bytes match: True`, then `data_roundtrip=ok`, `device_kind=gpu` and
+`result=cuda_ok`; `cleanup.sh --purge` left `machines=clean`. The eval prompts were not re-run.
+
 ## Re-verified on v1.22.2, the no-GPU path
 
 Run 2026-10-03 PT against v1.22.2 from the published release, under an isolated `HOME` on macOS

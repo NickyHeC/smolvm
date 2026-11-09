@@ -15,12 +15,9 @@ case "$path" in
     *) printf 'usage: preflight.sh vulkan|cuda\n' >&2; exit 2 ;;
 esac
 
-# The release each path last ran on, per platform. On Linux, Vulkan has only run
-# on a host with no GPU, and CUDA's GPU run is the older one.
-case "$path-$(uname -s)" in
-    cuda-Linux) VERIFIED_VERSION="1.14.6" ;;
-    *)          VERIFIED_VERSION="1.34.0" ;;
-esac
+# Both paths last ran on this release on every platform here. On Linux, Vulkan
+# has run only on hosts where the guest got no working device.
+VERIFIED_VERSION="1.34.0"
 
 emit() { printf '%s=%s\n' "$1" "$2"; }
 note() { printf 'note=%s\n' "$1"; }
@@ -125,7 +122,7 @@ check_vulkan_linux() {
         emit gpu "$gpu"
         if [ -n "$pkg_version" ] && [ "$(printf '%s\n1.2.0\n' "$pkg_version" | sort -V | head -1)" != "1.2.0" ]; then
             blocked=1
-            note "an NVIDIA host needs virglrenderer 1.2.0 or newer and this host's package is $pkg_version, so the guest's vkCreateDevice would fail; docs/gpu.md says what to do"
+            note "an NVIDIA host needs virglrenderer 1.2.0 or newer and this host's package is $pkg_version, which gives the guest no working Vulkan device; docs/gpu.md says what to do"
         elif [ -z "$pkg_version" ]; then
             note "an NVIDIA host needs virglrenderer 1.2.0 or newer, and no package reports this host's version"
         fi

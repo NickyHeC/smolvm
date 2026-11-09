@@ -13,10 +13,10 @@ device computed or copied. `README.md` says why each path checks what it checks.
 | Path | Platform | Status on v1.33.0, 2026-11-06 | Last GPU run |
 |---|---|---|---|
 | Vulkan | macOS arm64, Apple M4 | **VERIFIED** for device, compute shader and offscreen render; WebGL through Chromium does not work there | v1.33.0 |
-| Vulkan | Linux | **PARTIAL**: ran only on an aarch64 host with no GPU, where the preflight blocks and the guest's `vkCreateInstance` fails | none |
+| Vulkan | Linux | **PARTIAL**: no GPU has rendered. On an NVIDIA A10 with Ubuntu 22.04's virglrenderer 0.9.1 the preflight blocks and the guest gets no device; 1.2.0 was not run. On an aarch64 host with no GPU the guest's `vkCreateInstance` fails | none |
 | Vulkan | Windows | **N/A**: `--gpu` has no effect | none |
 | CUDA | macOS | **N/A**: no CUDA driver. The preflight's refusal and the emulation device were run | none |
-| CUDA | Linux with an NVIDIA GPU | **not run** | v1.14.6, A10, 2026-09-11 |
+| CUDA | Linux with an NVIDIA GPU | **VERIFIED** on an A10 on v1.34.0, twice | v1.34.0, A10, 2026-11-09 |
 | CUDA | Windows with an NVIDIA GPU | **not run** | v1.22.2, RTX 4050, 2026-10-03 |
 | CUDA | Linux aarch64, no NVIDIA GPU | **PARTIAL**: the preflight's refusal, and the emulation device by hand at 1024 MiB; the probe's 8192 MiB did not boot, nor did a plain `machine run` at that size | none |
 
@@ -24,7 +24,11 @@ device computed or copied. `README.md` says why each path checks what it checks.
 `result=vulkan_ok` on `alpine` (Mesa 26.1.6, `vkmark` 2733 and 2154) and on `debian:trixie-slim`
 (Mesa 24.2.8), and the CUDA refusal and `result=cpu_emulation_not_gpu`; on Lima once, the same
 `result=blocked`, `vkCreateInstance` returning -1, and the 8192 MiB probe not booting. WebGL and the
-1024 MiB emulation device on Linux were not re-run.
+1024 MiB emulation device on Linux were not re-run. On an NVIDIA A10 (Ubuntu 22.04 x86_64, driver
+580.105.08), twice: the CUDA path `result=cuda_ok`, with `name = NVIDIA A10`, `total MiB = 22587` and
+the round trip `True`, and once more on `python:3.12-bookworm`; the Vulkan path `result=blocked`
+with Ubuntu's `libvirglrenderer1` 0.9.1, and past it `device_kind=none` on `alpine` and a VMM
+`SIGSEGV` on `debian:trixie-slim`.
 
 ## Procedure
 
@@ -180,8 +184,9 @@ Full detail in `references/traps.md`.
   no GPU, on Alpine and on Debian 12.
 - **`virglrenderer0` is not a package** on Ubuntu 24.04, Debian 12 or Debian 13. `libvirglrenderer1`
   is, at 1.0.0, 0.10.4 and 1.1.0.
-- **An NVIDIA host needs virglrenderer 1.2.0 or newer**, and none of those three ships it. No NVIDIA
-  host has run this path.
+- **An NVIDIA host needs virglrenderer 1.2.0 or newer**, and none of those three ships it, nor does
+  Ubuntu 22.04 (0.9.1). On an A10 with 0.9.1 the preflight blocked; past it `alpine` found no device
+  and `debian:trixie-slim` crashed the VMM with `SIGSEGV`. 1.2.0 on NVIDIA was not run.
 
 **CUDA**
 
@@ -252,8 +257,8 @@ x86_64 was not run at all this time. `docs/gpu.md` reports a Venus device on Lin
 this packet has not repeated that.
 
 - **WebGL on any Linux host.**
-- **This `preflight.sh` on an NVIDIA host.** Its Vulkan check for one ran against a stand-in
-  `nvidia-smi`; its CUDA checks are the ones the A10 ran.
+- **Vulkan on NVIDIA with virglrenderer 1.2.0 or newer.** On the A10 on v1.34.0 the build from
+  source was not run, so the 1.2.0 claim is still `docs/gpu.md`'s.
 - **Vulkan on an Intel Mac**, and any Apple chip but the M4.
 - **`--gpu-vram`, a Smolfile's `gpu = true`, and a persistent `--gpu` machine.** The probe uses an
   ephemeral `machine run --gpu`; the flags are in `docs/gpu.md`.

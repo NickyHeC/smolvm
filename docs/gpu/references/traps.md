@@ -77,22 +77,29 @@ llvmpipe in that run, which reads as `graphics=FAIL`.
 | Ubuntu 24.04 | none | 1.0.0-1ubuntu2 |
 | Debian 12 | none | 0.10.4-1 |
 | Debian 13 | none | 1.1.0-2 |
+| Ubuntu 22.04, on the A10 host, 2026-11-09 | none | 0.9.1-1~exp1ubuntu2 |
 
-An NVIDIA host needs 1.2.0 or newer, so on all three that host needs a build from source.
+An NVIDIA host needs 1.2.0 or newer, so on all four that host needs a build from source.
 
 ### An NVIDIA host needs virglrenderer 1.2.0 or newer
 
 `docs/gpu.md`: older render servers preload Vulkan in a way NVIDIA's driver rejects, so the guest's
 `vkCreateDevice` fails with `VK_ERROR_INITIALIZATION_FAILED`. The preflight blocks when a dpkg
 package owns the library the loader finds and is older. It was tested with a stand-in `nvidia-smi`
-script. **No NVIDIA host ran it.**
+script, and on an NVIDIA A10 on v1.34.0 with Ubuntu 22.04's `libvirglrenderer1` 0.9.1, where it said
+`result=blocked` with that note. Past it the guest never reached `vkCreateDevice`: on `alpine` the
+probe found no device, and on `debian:trixie-slim` the VMM died with `SIGSEGV` and `Vulkan support
+was not enabled in virglrenderer`, so 0.9.1 has no Venus at all. 1.2.0 was not built there, so the
+claim above is still unchecked.
 
 ### A working NVIDIA compute driver does not imply a graphics stack
 
 On v1.14.2 a Lambda A10 with CUDA working had no `libEGL.so.1`, and `--gpu` died with `SIGABRT (a
 crash in the VMM or a library it loaded)` until `libegl1` was installed. A missing
 `libvirglrenderer.so.1` gives a clean message instead. The preflight checks for both. Not re-run on
-v1.33.0.
+v1.33.0. On v1.34.0 a Lambda A10 also had no NVIDIA Vulkan driver: `vulkaninfo` named the A10 only
+after `libnvidia-gl-580-server` was installed, the package matching the host's `-server` compute
+packages and driver 580.105.08.
 
 ### `vulkaninfo` prints an error that means nothing
 
