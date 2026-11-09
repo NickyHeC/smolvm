@@ -151,7 +151,9 @@ memory included, in `vms/_restore-base`, after every machine and checkpoint is g
 `verify-clean.sh` reports it as `restore_base=present` rather than as a leak; remove it with
 `rm -rf` once no restore is running.
 From v1.22.0 it is `vms/_restore-checkpoints`, reported as `restore_cache=present`;
-`references/traps.md` has its size and how to turn it off.
+`references/traps.md` has its size and how to turn it off. From v1.31.2 macOS also keeps
+`vms/_pack-templates`, one unpacked template per pack that machines created from it clone, reported
+as `pack_templates=present`; on v1.34.0 the README's pack steps left 385 MB there.
 
 **A machine named `image-seed-<hash>-<pid>` or `init-bake-<hash>-<pid>` is smolvm's own helper.**
 From v1.22.0 the first run of a registry image builds a shared seed of it in a helper machine, and
