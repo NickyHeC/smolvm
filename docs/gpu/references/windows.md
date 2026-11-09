@@ -1,10 +1,12 @@
 # CUDA on Windows
 
-**Re-run on 2026-10-03 against smolvm v1.22.2** on Windows 11 Home build 10.0.26200 UBR 9457
-x86_64 with an **NVIDIA GeForce RTX 4050 Laptop GPU** (driver 32.0.15.6626), in an elevated
-session: the probe, the two absences, the shim in a plain `alpine` guest and the Vulkan note all
-reproduced, and a real compute workload ran (below). The transcripts that follow are from the
-**2026-09-11 run against v1.14.6** on build 10.0.26200.0 UBR 9445, where they read the same.
+**Re-run on 2026-11-09 against smolvm v1.34.0** on Windows 11 Home build 10.0.26200 UBR 9711
+x86_64 with an **NVIDIA GeForce RTX 4050 Laptop GPU** (driver 566.26), in an elevated session: the
+probe line below, at `--mem 6144` and at the `--mem 8192` of `run-cuda-probe.sh`, the two
+absences, a real compute workload and the BLAS call that writes nothing, all as on v1.22.2 on
+2026-10-03. The Vulkan path ran there for the first time and found no device (the last section).
+The transcripts that follow are from the **2026-09-11 run against v1.14.6** on build 10.0.26200.0
+UBR 9445, where they read the same.
 
 `--cuda` injects the same remoting shim as on Linux and the guest reaches the real device.
 `$exe` is the path to `smolvm.exe` and `$probe` the packet's `scripts` folder.
@@ -13,7 +15,7 @@ reproduced, and a real compute workload ran (below). The transcripts that follow
 & $exe machine run --cuda --net --mem 6144 -v "${probe}:/probe:ro" --image python:3.12-slim -- python3 /probe/cuda-probe.py
 ```
 
-This line is corrected from the one the runs used and has not been run itself.
+This line ran as written on v1.34.0: the output below, `exit 0`, in 6.6 s including the pull.
 
 Observed on v1.14.6, from the packet's own `scripts/cuda-probe.py`:
 
@@ -37,15 +39,15 @@ came back, so this is not a stub. The device name is the other one.
 
 ## A real workload, and one that silently does nothing
 
-On v1.22.2, from `python:3.12-slim` with no CUDA toolkit, through Python `ctypes` against
+On v1.34.0, from `python:3.12-slim` with no CUDA toolkit, through Python `ctypes` against
 `/opt/smolvm-cuda/libcuda.so.1`: a PTX vector add (`.target sm_50`) over 16777216 elements ran in
-10.7 ms including the synchronize, and every sampled element equalled the float32 sum computed on
-the host. Compare in float32: at magnitudes around four million float32 spacing is 0.5, and a
+7.2 ms including the synchronize (10.7 ms on v1.22.2), and all 4096 sampled elements equalled the
+float32 sum computed on the host. Compare in float32: at magnitudes around four million float32 spacing is 0.5, and a
 double-precision expectation reports false mismatches.
 
 `cublasSgemm_v2`, reached through the shim's `libcublas`, **returns 0 and does not write its
 output.** With C preloaded to 5, `alpha=1`, `beta=2` and all-ones inputs, a 256 by 256 product
-should read 266 and read 5.0, on v1.22.2 as on v1.14.3. Preload the output and pick a `beta` that
+should read 266 and read 5.0, on v1.34.0 (`libcublas.so.11`) as on v1.22.2 and v1.14.3. Preload the output and pick a `beta` that
 separates "computed", "beta only" and "untouched" before trusting any BLAS call here.
 
 ## The two absences are correct
@@ -74,6 +76,22 @@ the shim is glibc, which is the next note.
   with `crane blob failed ... unexpected EOF` on this host's network. A transfer failure, not a
   CUDA one, but another reason to prefer a small image.
 - **Do not capture `machine run` output in PowerShell.** See the `install` packet's Windows page.
-- **Vulkan is a different story.** `machine run --gpu` boots and exits 0, and in the guest
-  `/dev/dri` does not exist and `dmesg` has zero `virtio_gpu` lines. No error, no warning, no
-  mention that the flag was dropped.
+- **Vulkan is a different story**, in the next section.
+
+## The Vulkan path on Windows: no device
+
+`--gpu` is accepted and gives the guest nothing, on v1.34.0 as on v1.14.6 and v1.22.2.
+`machine run --gpu` boots and exits 0, and in the guest `/dev/dri` does not exist and `dmesg` has
+zero `virtio_gpu` lines; `machine create --gpu` is accepted too. No error, no warning, no mention
+that the flag was dropped. The packet's `vulkan-guest.sh`, run by hand in a `--gpu` machine with
+`scripts/` mounted at `/probe`:
+
+```
+alpine               packages=0  no device  compute=failed
+debian:trixie-slim   packages=0  vkCreateInstance(&ici, NULL, &inst) -> -9  compute=failed
+```
+
+`-9` is `VK_ERROR_INCOMPATIBLE_DRIVER`, which fits a guest with no GPU device. That is
+`device_kind=none` and `result=FAILED` in `run-vulkan-probe.sh`'s terms, which is the right answer
+on this host. The shipped `README.txt` says GPU acceleration is not yet supported on Windows,
+which is true of this path and not of CUDA.

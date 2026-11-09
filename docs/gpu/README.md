@@ -60,7 +60,7 @@ Driver API, the `cu*` C functions. The shim is glibc, so an Alpine guest cannot 
 image carries.
 
 macOS has no CUDA driver, so `--cuda` has nothing to load there. CUDA remoting was verified on
-Windows on v1.22.2 against an RTX 4050, including a device round trip; where the project's pages
+Windows on v1.34.0 against an RTX 4050, including a device round trip and a vector add; where the project's pages
 say GPU acceleration is unavailable on Windows, they mean the Vulkan `--gpu` path, a different
 feature. `references/windows.md` has that run.
 

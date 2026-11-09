@@ -178,7 +178,7 @@ check_cuda() {
             note "macOS has no CUDA driver, so --cuda has nothing to reach here."
             ;;
         Linux) ;;
-        *) note "this script covers macOS and Linux. CUDA was verified on Windows by hand on v1.22.2; see references/windows.md." ;;
+        *) note "this script covers macOS and Linux. CUDA was verified on Windows by hand on v1.34.0; see references/windows.md." ;;
     esac
 
     if command -v nvidia-smi >/dev/null 2>&1; then

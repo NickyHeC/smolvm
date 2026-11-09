@@ -14,10 +14,10 @@ device computed or copied. `README.md` says why each path checks what it checks.
 |---|---|---|---|
 | Vulkan | macOS arm64, Apple M4 | **VERIFIED** for device, compute shader and offscreen render; WebGL through Chromium does not work there | v1.33.0 |
 | Vulkan | Linux | **PARTIAL**: ran only on an aarch64 host with no GPU, where the preflight blocks and the guest's `vkCreateInstance` fails | none |
-| Vulkan | Windows | **N/A**: `--gpu` has no effect | none |
+| Vulkan | Windows | **N/A**: `--gpu` is accepted and the guest gets no device; the probe ran on v1.34.0, 2026-11-09, and failed as it should | none |
 | CUDA | macOS | **N/A**: no CUDA driver. The preflight's refusal and the emulation device were run | none |
 | CUDA | Linux with an NVIDIA GPU | **not run** | v1.14.6, A10, 2026-09-11 |
-| CUDA | Windows with an NVIDIA GPU | **not run** | v1.22.2, RTX 4050, 2026-10-03 |
+| CUDA | Windows with an NVIDIA GPU | **VERIFIED** by hand on v1.34.0: device name, round trip, a vector add; cuBLAS `Sgemm` writes nothing | v1.34.0, RTX 4050, 2026-11-09 |
 | CUDA | Linux aarch64, no NVIDIA GPU | **PARTIAL**: the preflight's refusal, and the emulation device by hand at 1024 MiB; the probe's 8192 MiB did not boot, nor did a plain `machine run` at that size | none |
 
 ## Procedure

@@ -182,5 +182,5 @@ the same host: `nvidia-smi` still reported the device, and a whole-filesystem sw
 `--cuda` is compute over vsock. `--gpu` is Vulkan graphics over virtio-gpu; on the hosts tested
 through v1.16.1 the host renderer reported the Venus capset at version 0, and on v1.18.2 on macOS
 arm64 a guest reached `Virtio-GPU Venus (Apple M4)`. `docs/gpu.md` in the repository covers it. They share nothing
-but the word GPU. On Windows, on v1.14.6 and v1.22.2, `--gpu` boots and the guest has no GPU
-device; nothing reports that the flag was dropped.
+but the word GPU. On Windows, on v1.14.6, v1.22.2 and v1.34.0, `--gpu` boots and the guest has
+no GPU device; nothing reports that the flag was dropped.
