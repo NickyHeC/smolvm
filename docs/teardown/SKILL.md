@@ -182,8 +182,8 @@ session's; delete it by name with `--force`.
   on v1.22.2.
 - **Linux x86_64**: the procedure was verified on v1.14.2 on an NVIDIA A10 cloud host. The
   scripts themselves were not re-run there.
-- **Windows x86_64**: `references/windows.md`, **run on 2026-10-03 against v1.22.2** on
-  Windows 11 Home build 10.0.26200 UBR 9457 as the cleanup after runs that had created
+- **Windows x86_64**: `references/windows.md`, **re-run on 2026-11-09 against v1.34.0** on
+  Windows 11 Home build 10.0.26200 UBR 9711 as the cleanup after runs that had created
   machines, packs and bakes, after which the profile matched its listing from before them. The
   scripts are bash and do not run there. State cannot be relocated there, and one set of runs left
   30 GB in `%LOCALAPPDATA%\smolvm`.
