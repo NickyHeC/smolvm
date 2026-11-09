@@ -6,7 +6,8 @@ description: Keeps a rolling window of stored checkpoints of a running smolvm ma
 # Rewinding a machine
 
 Verified on **smolvm v1.33.0** on macOS arm64, 2026-11-05, with Codex CLI working in the machine, and
-on Linux aarch64, 2026-11-06, with a scripted stand-in workload, not an agent. Done means `status.sh`
+on Linux aarch64, 2026-11-06, with a scripted stand-in workload, not an agent; every step re-run on
+**v1.34.0** with the stand-in on 2026-11-09, below. Done means `status.sh`
 shows `oldest_age_s` at or above 600, and a rewound machine has the RAM token and the counter the
 source held at that capture, and is still doing what it was doing.
 
@@ -258,6 +259,19 @@ Written from pass 2 only.
 | Windows | not run; `branch-and-checkpoint` records that `--store` is refused there |
 | smol cloud | not run |
 
+## Re-run on v1.34.0
+
+Run 2026-11-09 PT against v1.34.0 from the published release, checksum checked, with the stand-in
+workload (alpine, 1024 MiB, a throwaway value bound to `httpbin.org`), no agent and no real key. On
+macOS 27.2 arm64, twice from fresh `HOME`s: a 600 s window held 20 captures, 0 skipped, 0 failed,
+`oldest_age_s=606`, captures of 0.8 s with a 0.03 s pause; rewinds of `1m`, `5m` and `9m30s` landed
+24, 15 and 8 s from the asked moment, each with the source's token and a counter behind the source's
+by its generation's age to within 3 s, and each with `value_arrived=yes`; then `retarget`, `drop` and
+`cleanup.sh` left no machine and no launchd job. The second pass used a 90 s window and added the
+refusals: the 502 without `--supply`, `start-supplied.sh`, the `--credential` refusal in its v1.34.0
+words, a machine with no bindings, and the frozen source. On Lima `linux-kvm` the second pass's
+script ran once with a systemd user timer, with the same values.
+
 ## What was not run
 
 - **A window for hours or days.** 18 minutes on macOS and 15 on Linux; store growth past that is reasoned
@@ -269,7 +283,6 @@ Written from pass 2 only.
   process lived 15 to 25 s, and several were restored mid-call, so the restore path ran; one process
   living through many captures did not.
 - **`machine branch` of a rewound machine**, and a rewound machine moved to another host.
-- **The live credential push of #2072**, which is after v1.33.0 and was read, not run.
 
 ## Related packets
 

@@ -40,13 +40,22 @@ Error: config operation failed: create from .smolcheckpoint: a live checkpoint k
 bindings it was captured with; --credential applies only to a machine created from an image or a pack
 ```
 
+On v1.34.0 the words changed and the refusal did not:
+
+```
+Error: config operation failed: create from a checkpoint: credential bindings cannot be set when
+restoring a live checkpoint: the captured workload holds the placeholders of the bindings it was
+captured with, and new bindings would mint ones it never received
+```
+
 The route that works is `PUT /api/v1/machines/<name>/credential-values` before `POST
 /api/v1/machines/<name>/start`, on one server, since the values live in that server's memory.
 `scripts/start-supplied.sh` runs a private server for exactly that, and the machine keeps running
 and keeps its value after the server exits. On v1.33.0 the `PUT` holds values for the next boot only,
 so it has to come before the first start, and a machine already started without them has to be
-rewound again. Source after v1.33.0 at 6358d287 (#2072) also pushes a `PUT` to a running machine;
-that was read, not run. An agent that runs into the 502 retries five times per call and fails its
+rewound again. From v1.34.0 (#2072) a `PUT` also reaches a running machine: a restored machine
+started by the CLI answered 502, the `PUT` to it on a private server answered 204, and its next request
+carried the value, as did one after that server exited. An agent that runs into the 502 retries five times per call and fails its
 turn; it spends nothing, since the request never leaves the host.
 
 ## A rewound machine that was stopped comes back cold, and without its values
