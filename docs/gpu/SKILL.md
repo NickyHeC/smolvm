@@ -13,7 +13,7 @@ device computed or copied. `README.md` says why each path checks what it checks.
 | Path | Platform | Status on v1.33.0, 2026-11-06 | Last GPU run |
 |---|---|---|---|
 | Vulkan | macOS arm64, Apple M4 | **VERIFIED** for device, compute shader and offscreen render; WebGL through Chromium does not work there | v1.33.0 |
-| Vulkan | Linux | **PARTIAL**: no GPU has rendered. On an NVIDIA A10 with Ubuntu 22.04's virglrenderer 0.9.1 the preflight blocks and the guest gets no device; 1.2.0 was not run. On an aarch64 host with no GPU the guest's `vkCreateInstance` fails | none |
+| Vulkan | Linux | **PARTIAL**: no GPU has rendered. On an NVIDIA A10 with virglrenderer 1.2.0 built from source the guest names `Virtio-GPU Venus (NVIDIA A10)`, and its first compute submission fails with `VK_ERROR_OUT_OF_HOST_MEMORY`; with Ubuntu 22.04's 0.9.1 the preflight blocks and the guest gets no device. On an aarch64 host with no GPU the guest's `vkCreateInstance` fails | none |
 | Vulkan | Windows | **N/A**: `--gpu` has no effect | none |
 | CUDA | macOS | **N/A**: no CUDA driver. The preflight's refusal and the emulation device were run | none |
 | CUDA | Linux with an NVIDIA GPU | **VERIFIED** on an A10 on v1.34.0, twice | v1.34.0, A10, 2026-11-09 |
@@ -181,12 +181,14 @@ Full detail in `references/traps.md`.
 - **OpenGL in a guest on a Mac is software**: `eglinfo` names `llvmpipe`. The bundled renderer is
   Venus only, so use Vulkan directly.
 - **`ERROR_OUT_OF_HOST_MEMORY` is not about memory.** It is what the guest got on a Linux host with
-  no GPU, on Alpine and on Debian 12.
+  no GPU, on Alpine and on Debian 12, and what the first `vkQueueWaitIdle` returned on an NVIDIA A10
+  with virglrenderer 1.2.0, after the device had been named.
 - **`virglrenderer0` is not a package** on Ubuntu 24.04, Debian 12 or Debian 13. `libvirglrenderer1`
   is, at 1.0.0, 0.10.4 and 1.1.0.
 - **An NVIDIA host needs virglrenderer 1.2.0 or newer**, and none of those three ships it, nor does
   Ubuntu 22.04 (0.9.1). On an A10 with 0.9.1 the preflight blocked; past it `alpine` found no device
-  and `debian:trixie-slim` crashed the VMM with `SIGSEGV`. 1.2.0 on NVIDIA was not run.
+  and `debian:trixie-slim` crashed the VMM with `SIGSEGV`. With 1.2.0 built from source the device
+  appears and compute still fails ([traps](references/traps.md)).
 
 **CUDA**
 
@@ -257,8 +259,8 @@ x86_64 was not run at all this time. `docs/gpu.md` reports a Venus device on Lin
 this packet has not repeated that.
 
 - **WebGL on any Linux host.**
-- **Vulkan on NVIDIA with virglrenderer 1.2.0 or newer.** On the A10 on v1.34.0 the build from
-  source was not run, so the 1.2.0 claim is still `docs/gpu.md`'s.
+- **Vulkan work on NVIDIA.** With virglrenderer 1.2.0 on the A10 on v1.34.0 the device is named and
+  the first compute submission fails with `VK_ERROR_OUT_OF_HOST_MEMORY`; why is not traced.
 - **Vulkan on an Intel Mac**, and any Apple chip but the M4.
 - **`--gpu-vram`, a Smolfile's `gpu = true`, and a persistent `--gpu` machine.** The probe uses an
   ephemeral `machine run --gpu`; the flags are in `docs/gpu.md`.

@@ -89,8 +89,12 @@ package owns the library the loader finds and is older. It was tested with a sta
 script, and on an NVIDIA A10 on v1.34.0 with Ubuntu 22.04's `libvirglrenderer1` 0.9.1, where it said
 `result=blocked` with that note. Past it the guest never reached `vkCreateDevice`: on `alpine` the
 probe found no device, and on `debian:trixie-slim` the VMM died with `SIGSEGV` and `Vulkan support
-was not enabled in virglrenderer`, so 0.9.1 has no Venus at all. 1.2.0 was not built there, so the
-claim above is still unchecked.
+was not enabled in virglrenderer`, so 0.9.1 has no Venus at all. Built from source (1.2.0,
+`meson setup build --prefix=/usr/local -Dvenus=true`, which the loader takes before the system copy),
+the guest names `Virtio-GPU Venus (NVIDIA A10)` and `llvmpipe`, so 1.2.0 clears the device step. The
+first compute submission then fails, `vkQueueWaitIdle` returning `VK_ERROR_OUT_OF_HOST_MEMORY` (-1),
+and the graphics check with it, on `alpine` and on `debian:trixie-slim`. The preflight cannot read a
+source build's version, says so in a note, and reports `result=ready`.
 
 ### A working NVIDIA compute driver does not imply a graphics stack
 
