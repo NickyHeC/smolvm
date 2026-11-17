@@ -1,0 +1,10 @@
+environmentRecipes:
+  - id: smolvm
+    name: smolvm (local microVM)
+    create: ./scripts/orca-vm/smolvm-create.sh
+    suspend: ./scripts/orca-vm/smolvm-suspend.sh
+    resume: ./scripts/orca-vm/smolvm-resume.sh
+    destroy: ./scripts/orca-vm/smolvm-destroy.sh
+    timeoutSeconds:
+      create: 600
+      resume: 120

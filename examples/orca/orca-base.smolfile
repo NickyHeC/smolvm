@@ -1,0 +1,11 @@
+# The base every Orca workspace machine starts from: Ubuntu 24.04 with sshd and git, so
+# create does not spend its time in apt-get. build-base.sh turns it into a .smolmachine.
+# Host keys are removed here; each machine made from the pack generates its own.
+image = "ubuntu:24.04"
+net = true
+cpus = 2
+memory = 2048
+entrypoint = ["sleep", "infinity"]
+init = [
+  "export DEBIAN_FRONTEND=noninteractive && apt-get update -qq && apt-get install -y -qq --no-install-recommends openssh-server git ca-certificates && rm -rf /var/lib/apt/lists/* && rm -f /etc/ssh/ssh_host_*",
+]

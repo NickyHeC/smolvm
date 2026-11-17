@@ -32,6 +32,11 @@ smolvm machine exec --name browser -- base64 /tmp/out.png | base64 -d > out.png
 [`amp-orbs/`](amp-orbs/) runs [Amp](https://ampcode.com)'s self-hosted orbs as
 smol machines, on your own Linux host or on smol cloud.
 
+### Orca
+
+[`orca/`](orca/) is an [Orca](https://github.com/stablyai/orca) environment
+recipe that runs each workspace in a smol machine on your Mac or Linux host.
+
 ### Persistent microVMs
 
 ```bash
